@@ -4,8 +4,9 @@ import { PageHeader } from '@/components/PageHeader';
 import { GroupCard } from '@/components/GroupCard';
 import { StatCard, StatCardPercentDelta } from '@/components/StatCard';
 import { DemoNotice } from '@/components/DemoNotice';
-import { communityTotals, groupsInCommunity, loadDashboard } from '@/lib/dashboard';
-import { countNoun, getCommunity, getGroup } from '@/lib/groups';
+import { communityTotals, groupsInCommunity, loadDashboard, trafficFunnel } from '@/lib/dashboard';
+import { countNoun, getCommunity, getGroup, integrationsFor } from '@/lib/groups';
+import { TrafficFunnel } from '@/components/TrafficFunnel';
 import { formatExact, formatPercent, formatSigned } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
 
@@ -38,6 +39,10 @@ export default async function CommunityOverviewPage({
     .slice(0, 3);
 
   const noun = community.groupNoun.toLowerCase();
+  // Whether any automated source represents this community. Manual-only
+  // communities show no pulled figures, no source pills, no refresh button.
+  const hasSources = integrationsFor(community.slug).length > 0;
+  const funnel = hasSources ? trafficFunnel(data, community.slug) : null;
 
   return (
     <>
@@ -45,12 +50,16 @@ export default async function CommunityOverviewPage({
         eyebrow={`${community.label} · Overview`}
         title={community.name}
         weekStart={data.displayWeek}
-        states={data.snapshot.states}
+        states={hasSources ? data.snapshot.states : []}
         fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice
+          snapshot={data.snapshot}
+          demoEntries={data.demoEntries}
+          sources={hasSources}
+        />
 
         <div className="grid grid--stats">
           <StatCard
@@ -60,11 +69,18 @@ export default async function CommunityOverviewPage({
             deltaSuffix="new this week"
             accent
           />
-          <StatCard
-            label="Leads this week"
-            value={formatExact(totals.leads)}
-            hint={`${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`}
-          />
+          {/* Only communities with Sheets coverage have a lead count at all. */}
+          {totals.leads !== null ? (
+            <StatCard
+              label="Leads this week"
+              value={formatExact(totals.leads)}
+              hint={
+                totals.sessions !== null
+                  ? `${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`
+                  : 'from the registration sheet'
+              }
+            />
+          ) : null}
           <StatCardPercentDelta
             label="Poll response rate"
             value={formatPercent(totals.pollResponseRatePct)}
@@ -76,6 +92,15 @@ export default async function CommunityOverviewPage({
             hint="Replies ÷ DMs sent, pooled"
           />
         </div>
+
+        {funnel ? (
+          <div style={{ marginTop: 14 }}>
+            <TrafficFunnel
+              totals={funnel}
+              subtitle={`Short.io → GA4 → registrations, attributed to ${community.label}`}
+            />
+          </div>
+        ) : null}
 
         <h2 className="sectionTitle">
           {community.groupNoun} · week of {formatWeekRange(data.displayWeek)}

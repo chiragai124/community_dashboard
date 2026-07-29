@@ -7,7 +7,7 @@ import { WeeklyEntryForm } from '@/components/WeeklyEntryForm';
 import { SingleTrendChart, Sparkline } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
 import { WeekQualitative, hasQualitative } from '@/components/WeekQualitative';
-import { getCommunity, getGroup } from '@/lib/groups';
+import { getCommunity, getGroup, integrationsFor } from '@/lib/groups';
 import { entryWeekOptions, groupSeries, loadDashboard, weeklySessions } from '@/lib/dashboard';
 import { buildPollHistory, formatExact, formatPercent } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
@@ -43,6 +43,12 @@ export default async function GroupPage({
   const sessionPoints = weeklySessions(data, group.slug);
   const leadPoints = series.map((m) => ({ week: m.weekStart, value: m.totalLeads }));
 
+  // Null leads/sessions = this group's community declares no coverage from the
+  // automated sources, so none of their panels belong on this page.
+  const hasLeads = metrics.totalLeads !== null;
+  const hasSessions = metrics.totalSessions !== null;
+  const hasSources = integrationsFor(community.slug).length > 0;
+
   return (
     <>
       <PageHeader
@@ -60,12 +66,16 @@ export default async function GroupPage({
           </>
         }
         weekStart={data.displayWeek}
-        states={data.snapshot.states}
+        states={hasSources ? data.snapshot.states : []}
         fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice
+          snapshot={data.snapshot}
+          demoEntries={data.demoEntries}
+          sources={hasSources}
+        />
 
         {metrics.entry === null ? (
           <div className="prefillNote" style={{ marginBottom: 18 }}>
@@ -113,13 +123,18 @@ export default async function GroupPage({
             <Sparkline points={dmRatePoints} />
           </StatCardPercentDelta>
 
-          <StatCard
-            label="Leads this week"
-            value={formatExact(metrics.totalLeads)}
-            hint={`${formatExact(metrics.totalSessions)} GA4 sessions`}
-          >
-            <Sparkline points={leadPoints} />
-          </StatCard>
+          {/* Leads exist only where the sheet actually covers this community. */}
+          {hasLeads ? (
+            <StatCard
+              label="Leads this week"
+              value={formatExact(metrics.totalLeads)}
+              hint={
+                hasSessions ? `${formatExact(metrics.totalSessions)} GA4 sessions` : undefined
+              }
+            >
+              <Sparkline points={leadPoints} />
+            </StatCard>
+          ) : null}
         </div>
 
         {metrics.notes.trim() !== '' || hasQualitative(metrics.entry) ? (
@@ -152,46 +167,54 @@ export default async function GroupPage({
           </section>
         ) : null}
 
-        <div className="grid grid--halves" style={{ marginTop: 22 }}>
-          <section className="card">
-            <div className="card__head">
-              <div>
-                <div className="card__title">Leads by source · this week</div>
-                <div className="card__sub">
-                  Registrations from the sheet, bucketed by UTM source
+        {/* The integration panels exist only for groups the sources represent.
+            Community #1 groups are manual-only, so neither renders there. */}
+        {hasLeads || hasSessions ? (
+          <div className="grid grid--halves" style={{ marginTop: 22 }}>
+            {hasLeads ? (
+              <section className="card">
+                <div className="card__head">
+                  <div>
+                    <div className="card__title">Leads by source · this week</div>
+                    <div className="card__sub">
+                      Registrations from the sheet, bucketed by UTM source
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div className="card__body">
-              <LeadsBySourceBars rows={metrics.leadsBySource} />
-              <p className="chartNote">
-                Conversion is this week’s leads over the tracked link’s click total from
-                Short.io, which reports lifetime clicks — read it as a floor, not an exact
-                weekly rate.
-              </p>
-            </div>
-          </section>
+                <div className="card__body">
+                  <LeadsBySourceBars rows={metrics.leadsBySource} />
+                  <p className="chartNote">
+                    Conversion is this week’s leads over the tracked link’s click total from
+                    Short.io, which reports lifetime clicks — read it as a floor, not an exact
+                    weekly rate.
+                  </p>
+                </div>
+              </section>
+            ) : null}
 
-          <section className="card">
-            <div className="card__head">
-              <div>
-                <div className="card__title">Site traffic · last {sessionPoints.length} weeks</div>
-                <div className="card__sub">
-                  GA4 sessions on {group.utmCampaigns[0]}
+            {hasSessions ? (
+              <section className="card">
+                <div className="card__head">
+                  <div>
+                    <div className="card__title">
+                      Site traffic · last {sessionPoints.length} weeks
+                    </div>
+                    <div className="card__sub">GA4 sessions on {group.utmCampaigns[0]}</div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div className="card__body">
-              <SingleTrendChart
-                points={sessionPoints}
-                seriesLabel="Sessions"
-                unit="count"
-                height={216}
-                wash
-              />
-            </div>
-          </section>
-        </div>
+                <div className="card__body">
+                  <SingleTrendChart
+                    points={sessionPoints}
+                    seriesLabel="Sessions"
+                    unit="count"
+                    height={216}
+                    wash
+                  />
+                </div>
+              </section>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid grid--halves" style={{ marginTop: 14 }}>
           <section className="card">

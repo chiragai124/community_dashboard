@@ -7,7 +7,9 @@ import { demoShortLinks } from '../demo';
  *
  * Uses the public REST API with an API key (Short.io dashboard → Integrations
  * & API → API keys). Links are matched to groups by their Short.io tag, set in
- * lib/groups.ts as `shortioTag`.
+ * lib/groups.ts as `shortioTag` (currently `scholarship_teamB` for Community
+ * #2). The tag identifies which community a link belongs to and applies to
+ * Short.io only — Sheets and GA4 rows are matched by campaign/country instead.
  *
  * Note on the numbers: /links returns each link's lifetime click total, not
  * clicks within a date window. The dashboard therefore treats the conversion
@@ -83,7 +85,11 @@ export async function fetchShortLinks(): Promise<ShortIoResult> {
             title,
             tag,
             clicks: Number(link.totalClicks ?? link.clicks ?? 0),
-            source: bucketSource(title, tags.join(' ')),
+            // Bucket by TITLE ONLY. The tag identifies the community, not the
+            // marketing source — feeding `scholarship_teamB` into the bucketer
+            // would classify every one of that community's links as
+            // "Scholarship teams" regardless of what it actually promotes.
+            source: bucketSource(title),
           });
         }
       }

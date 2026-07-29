@@ -47,7 +47,16 @@ degrades on its own, so you can connect them one at a time.
 |---|---|---|
 | **Google Sheets** | Registrations: name, email, country, university, UTM source/medium/campaign, timestamp | `GOOGLE_SHEETS_ID` + service-account credentials |
 | **GA4 Data API** | Weekly sessions by campaign / source / medium | `GA4_PROPERTY_ID` + the same service account |
-| **Short.io** | Click counts per tracked link, per group | `SHORTIO_API_KEY`, `SHORTIO_DOMAIN_ID` |
+| **Short.io** | Click counts per tracked link (tag: `scholarship_teamB`) | `SHORTIO_API_KEY`, `SHORTIO_DOMAIN_ID` |
+
+**All three sources represent Community #2 only.** None of them feed Community
+#1's groups, whose numbers are manual weekly entries — so Community #1 pages
+show no leads, sessions, source pills or refresh button at all, rather than
+misleading zeros. Which community a source covers is declared per community in
+`lib/groups.ts` (`integrations`); the Merged view rolls every declared source
+into one combined traffic/funnel layer (Short.io clicks → GA4 sessions →
+registrations). The `scholarship_teamB` tag applies to Short.io links only —
+Sheets and GA4 rows are matched by campaign/country.
 
 One Google service account covers both Google sources: share the sheet with its
 email, and add that email as a Viewer on the GA4 property.
@@ -62,26 +71,40 @@ Communities, their groups, and every join key against the three data sources liv
 in [`lib/groups.ts`](lib/groups.ts). Nothing else reads them.
 
 ```ts
+// Per community: which sources represent it. THE attribution switch.
+{ slug: 'community-1', integrations: [], … }                        // manual-only
+{ slug: 'community-2', integrations: ['sheets', 'ga4', 'shortio'], … }
+
+// Per group: the join keys the declared sources use.
 {
-  slug: 'uk',
-  community: 'community-1',                          // which community it belongs to
-  sheetCountry: ['UK', 'United Kingdom', 'GB', …],   // matches the sheet's country column
-  utmCampaigns: ['community_uk', 'wa_community_uk'], // matches GA4 + sheet campaigns
-  shortioTag: 'community-uk',                        // tag on the group's Short.io links
-  demo: { members: 842, growth: 0.041, leads: 34, universities: […] },
+  slug: 'aspirants-2026',
+  community: 'community-2',
+  utmCampaigns: ['community_aspirants_2026', …],  // matches GA4 + sheet campaigns
+  shortioTag: 'scholarship_teamB',                // tag on the Short.io links only
+  demo: { members: 610, growth: 0.068, leads: 27, universities: […] },
 }
 ```
+
+A pulled row can only ever be attributed to a group whose community declares
+that source. When a future community starts getting fed — as older communities
+fill up — add the source names to its `integrations` and set its join keys;
+every page, roll-up, demo generator and the merged funnel picks it up from
+config, with no integration code changes.
 
 Group slugs are globally unique across communities, so a stored weekly entry
 needs no community column — the group identifies it. Sheet **columns are matched
 by header name, not position**, so the sheet can be reordered freely (aliases are
 listed in `.env.example`).
 
-**Attribution is exclusive.** Each registration counts towards exactly one group:
-UTM campaign first, then country. This matters with two communities — a
-2026-intake member who lists "UK" as their destination would otherwise match both
-that cohort (by campaign) and Community #1's UK group (by country), and be
-counted twice in the merged totals.
+**Attribution is exclusive and coverage-scoped.** Each registration counts
+towards exactly one group: UTM campaign first, then country, considering only
+groups whose community declares Sheets coverage. This matters twice over — a
+2026-intake member who lists "UK" as their destination must neither be counted
+twice in the merged totals nor land in Community #1's UK group, whose numbers
+the sheet doesn't represent. While Community #2 has a single Sheets-fed segment,
+sheet rows with no matching campaign still count towards it (the whole sheet is
+that community's signups); that fallback stops automatically the moment a second
+Sheets-fed group exists.
 
 ### Adding segments to Community #2
 
@@ -107,7 +130,7 @@ make it real, provide any of these:
 |---|---|---|
 | **Its segments**, if it has any | `COMMUNITY_2_GROUPS` | Names only; I'll wire them up |
 | **UTM campaign name(s)** | `utmCampaigns` | The exact string in GA4 / the sheet's campaign column |
-| **Short.io tag** | `shortioTag` | The tag on that community's tracked links |
+| **Short.io tag** | `shortioTag` | Configured as `scholarship_teamB` — correct it here if that changes |
 | **Current member count** | the weekly form | Or a starting number and I'll seed it |
 | **Weekly history**, if you have it | the weekly form, one week at a time | Member count, polls, DMs sent/replies, activity, notes — same format as Community #1 |
 

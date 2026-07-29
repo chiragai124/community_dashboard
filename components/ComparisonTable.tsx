@@ -28,8 +28,10 @@ export interface ComparisonRow {
   dmsSent: number;
   dmReplies: number;
   dmReplyRatePct: number | null;
-  totalLeads: number;
-  totalSessions: number;
+  /** Null when the group's community has no Sheets coverage. */
+  totalLeads: number | null;
+  /** Null when the group's community has no GA4 coverage. */
+  totalSessions: number | null;
   /** leads ÷ sessions, as a percentage. */
   leadConversionPct: number | null;
   activityLevel: ActivityLevel | null;
@@ -93,7 +95,15 @@ function sortValue(row: ComparisonRow, key: SortKey): number | string {
 export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
   // The community column only earns its space when rows span more than one.
   const showCommunity = new Set(rows.map((r) => r.communityLabel ?? '')).size > 1;
-  const columns = COLUMNS.filter((c) => c.key !== 'communityLabel' || showCommunity);
+  // Traffic columns only appear when at least one row is covered by the
+  // automated sources — a manual-only community's table shows none of them.
+  const showTraffic = rows.some((r) => r.totalLeads !== null || r.totalSessions !== null);
+  const TRAFFIC_KEYS: SortKey[] = ['totalLeads', 'totalSessions', 'leadConversionPct'];
+  const columns = COLUMNS.filter((c) => {
+    if (c.key === 'communityLabel') return showCommunity;
+    if (TRAFFIC_KEYS.includes(c.key)) return showTraffic;
+    return true;
+  });
   const [sortKey, setSortKey] = useState<SortKey>('totalMembers');
   const [descending, setDescending] = useState(true);
 
@@ -168,9 +178,14 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
                   <td className="num">{formatPercent(row.pollResponseRatePct)}</td>
                   <td className="num">{formatExact(row.dmsSent)}</td>
                   <td className="num">{formatPercent(row.dmReplyRatePct)}</td>
-                  <td className="num">{formatExact(row.totalLeads)}</td>
-                  <td className="num">{formatExact(row.totalSessions)}</td>
-                  <td className="num">{formatPercent(row.leadConversionPct)}</td>
+                  {/* formatExact renders null (no coverage) as "—". */}
+                  {showTraffic ? (
+                    <>
+                      <td className="num">{formatExact(row.totalLeads)}</td>
+                      <td className="num">{formatExact(row.totalSessions)}</td>
+                      <td className="num">{formatPercent(row.leadConversionPct)}</td>
+                    </>
+                  ) : null}
                   <td>
                     <ActivityBadge level={row.activityLevel} />
                   </td>

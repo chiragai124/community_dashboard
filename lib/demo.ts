@@ -4,7 +4,7 @@ import type {
   ShortLinkClicks,
   WeeklyEntry,
 } from './types';
-import { GROUPS, LEAD_SOURCE_BUCKETS } from './groups';
+import { GROUPS, LEAD_SOURCE_BUCKETS, groupsWithSource } from './groups';
 import { addWeeks, currentWeekStart, lastNWeeks, parseISODate, toISODate } from './weeks';
 
 /**
@@ -246,7 +246,9 @@ export function demoRegistrations(endWeek: string = currentWeekStart()): Registr
   const weeks = lastNWeeks(DEMO_WEEKS, endWeek);
   const rows: Registration[] = [];
 
-  for (const group of GROUPS) {
+  // Demo mirrors reality: only communities that declare Sheets coverage get
+  // registration rows, so Community #1 shows no fabricated signups either.
+  for (const group of groupsWithSource('sheets')) {
     const profile = group.demo;
     const rand = rng(hash(`regs:${group.slug}`));
 
@@ -290,7 +292,7 @@ export function demoGa4(endWeek: string = currentWeekStart()): Ga4SessionRow[] {
   const weeks = lastNWeeks(DEMO_WEEKS, endWeek);
   const rows: Ga4SessionRow[] = [];
 
-  for (const group of GROUPS) {
+  for (const group of groupsWithSource('ga4')) {
     const profile = group.demo;
     const rand = rng(hash(`ga4:${group.slug}`));
 
@@ -320,7 +322,7 @@ export function demoGa4(endWeek: string = currentWeekStart()): Ga4SessionRow[] {
 export function demoShortLinks(): ShortLinkClicks[] {
   const links: ShortLinkClicks[] = [];
 
-  for (const group of GROUPS) {
+  for (const group of groupsWithSource('shortio')) {
     const profile = group.demo;
     const rand = rng(hash(`shortio:${group.slug}`));
 

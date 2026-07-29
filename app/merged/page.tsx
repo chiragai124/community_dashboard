@@ -4,11 +4,13 @@ import { CommunityRollupCard } from '@/components/CommunityRollupCard';
 import { MultiGroupTrend } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
 import { COMMUNITIES, countNoun } from '@/lib/groups';
+import { TrafficFunnel } from '@/components/TrafficFunnel';
 import {
   loadDashboard,
   mergedTotals,
   multiCommunityRows,
   perCommunityTotals,
+  trafficFunnel,
 } from '@/lib/dashboard';
 import { formatExact, formatPercent, pct } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
@@ -73,11 +75,17 @@ export default async function MergedOverviewPage() {
             }
             accent
           />
-          <StatCard
-            label="Leads this week"
-            value={formatExact(totals.leads)}
-            hint={`${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`}
-          />
+          {totals.leads !== null ? (
+            <StatCard
+              label="Leads this week"
+              value={formatExact(totals.leads)}
+              hint={
+                totals.sessions !== null
+                  ? `${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`
+                  : 'from the registration sheet'
+              }
+            />
+          ) : null}
           <StatCardPercentDelta
             label="Poll response rate"
             value={formatPercent(totals.pollResponseRatePct)}
@@ -94,8 +102,18 @@ export default async function MergedOverviewPage() {
           Pooled across {countNoun(COMMUNITIES.length, 'communities')} and{' '}
           {countNoun(totals.groupCount, 'groups')}, for the week of{' '}
           {formatWeekRange(data.displayWeek)}. Rates are recomputed from summed numerators and
-          denominators, not averaged across communities.
+          denominators, not averaged across communities. Traffic and lead figures cover only
+          the communities the automated sources represent.
         </p>
+
+        {/* The combined traffic/funnel layer: every declared source across every
+            community, rolled up. Scoped by config, so a future community's
+            sources join this automatically. */}
+        <h2 className="sectionTitle">Traffic &amp; funnel · automated sources</h2>
+        <TrafficFunnel
+          totals={trafficFunnel(data)}
+          subtitle="Short.io → GA4 → registrations, across every community with declared sources"
+        />
 
         <h2 className="sectionTitle">By community</h2>
         <div className="grid grid--halves">

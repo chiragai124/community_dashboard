@@ -44,7 +44,9 @@ export function PageHeader({
           <span className="weekChip__value">{formatWeekRange(weekStart)}</span>
           <span className="weekChip__label">W{isoWeekNumber(weekStart)}</span>
         </span>
-        <SourceStrip states={states} fetchedAt={fetchedAt} />
+        {/* Manual-only pages pass no states: the source pills and the refresh
+            button describe pulled data those pages don't use. */}
+        {states.length > 0 ? <SourceStrip states={states} fetchedAt={fetchedAt} /> : null}
       </div>
     </header>
   );

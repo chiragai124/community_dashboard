@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import type { Ga4SessionRow, IntegrationState } from '../types';
 import { googleAuth, hasGoogleCreds } from './google-auth';
 import { demoGa4 } from '../demo';
-import { GROUPS } from '../groups';
+import { groupsWithSource } from '../groups';
 import { lastNWeeks, weekEnd } from '../weeks';
 
 /**
@@ -43,8 +43,23 @@ export async function fetchGa4Sessions(endWeek: string): Promise<Ga4Result> {
   const startDate = weeks[0];
   const endDate = weekEnd(weeks[weeks.length - 1]);
 
-  // Every campaign across all five groups — one request covers the dashboard.
-  const campaigns = GROUPS.flatMap((g) => g.utmCampaigns);
+  // Only campaigns of communities that declare GA4 coverage (today: Community
+  // #2). Querying Community #1's campaigns would attribute traffic to groups
+  // this property doesn't represent.
+  const campaigns = groupsWithSource('ga4').flatMap((g) => g.utmCampaigns);
+
+  if (campaigns.length === 0) {
+    return {
+      rows: [],
+      state: {
+        name: 'ga4',
+        label: 'Site traffic (GA4)',
+        status: 'live',
+        message: 'No community declares GA4 coverage in lib/groups.ts — nothing to pull.',
+        fetchedAt,
+      },
+    };
+  }
 
   try {
     const auth = googleAuth();

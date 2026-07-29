@@ -34,7 +34,9 @@ export default async function MergedComparisonPage() {
       dmReplyRatePct: metrics.dmReplyRatePct,
       totalLeads: metrics.totalLeads,
       totalSessions: metrics.totalSessions,
-      leadConversionPct: pct(metrics.totalLeads, metrics.totalSessions),
+      // Null leads = the group's community isn't covered by the sources.
+      leadConversionPct:
+        metrics.totalLeads === null ? null : pct(metrics.totalLeads, metrics.totalSessions),
       activityLevel: metrics.activityLevel,
       hasEntry: metrics.entry !== null,
     };
