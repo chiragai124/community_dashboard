@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { GroupWeekMetrics } from '@/lib/types';
-import { getGroup } from '@/lib/groups';
+import { communityOf, getGroup, singularize } from '@/lib/groups';
 import { formatExact, formatSigned, formatSignedPercent } from '@/lib/metrics';
 import { ActivityBadge } from './StatCard';
 
@@ -13,11 +13,12 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
   if (!group) return null;
 
   const hasEntry = metrics.entry !== null;
+  const noun = singularize(communityOf(metrics.group)?.groupNoun ?? 'Groups').toLowerCase();
   const growth = metrics.memberGrowthPct;
   const direction = growth === null ? 'flat' : growth > 0 ? 'up' : growth < 0 ? 'down' : 'flat';
 
   return (
-    <Link href={`/group/${group.slug}`} className="groupCard">
+    <Link href={`/c/${group.community}/group/${group.slug}`} className="groupCard">
       <div className="groupCard__head">
         <span className="groupCard__flag" aria-hidden="true">
           {group.flag}
@@ -75,7 +76,8 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
       </div>
 
       <div className="groupCard__foot">
-        {hasEntry ? 'View group' : 'Add this week’s numbers'}
+        {/* "View segment" in a community whose subdivisions are segments. */}
+        {hasEntry ? `View ${noun}` : 'Add this week’s numbers'}
         <span aria-hidden="true">→</span>
       </div>
     </Link>

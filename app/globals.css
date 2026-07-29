@@ -146,6 +146,57 @@ button {
   letter-spacing: 0.01em;
 }
 
+/* Level-1 scope switcher: Community #1 / Community #2 / Merged. Visually
+   heavier than the nav items below it, so the two levels never read as one
+   flat list. */
+.scopeSwitch {
+  padding: 12px 10px 12px;
+  border-bottom: 1px solid var(--black-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scopeItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--black-line);
+  background: var(--black-raised);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.scopeItem:hover {
+  border-color: #3d3d3d;
+}
+
+.scopeItem--active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.scopeItem__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ededed;
+}
+
+.scopeItem--active .scopeItem__label {
+  color: #fff;
+}
+
+.scopeItem__meta {
+  font-size: 10.5px;
+  color: #8f8f8f;
+  font-variant-numeric: tabular-nums;
+}
+
+.scopeItem--active .scopeItem__meta {
+  color: rgba(255, 255, 255, 0.88);
+}
+
 .sidebar__nav {
   padding: 14px 10px 24px;
   display: flex;
@@ -1283,6 +1334,15 @@ textarea {
     flex-direction: row;
     flex-wrap: wrap;
     padding: 10px;
+  }
+
+  .scopeSwitch {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .scopeItem {
+    flex: 1 1 150px;
   }
 
   .sidebar__section {

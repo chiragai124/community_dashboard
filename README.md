@@ -1,7 +1,13 @@
 # amber Community Dashboard
 
-Engagement and lead performance across amber's five WhatsApp communities — **UK,
-USA, Australia, Canada, Germany**.
+Engagement and lead performance across amber's WhatsApp communities, in three
+scopes selectable from the sidebar:
+
+| Scope | What it covers |
+|---|---|
+| **Community #1** | The five destination groups — UK, USA, Australia, Canada, Germany |
+| **Community #2** | `amber global aspirants #2 \| 2026 Intake` — its own report, not a group inside #1 |
+| **Merged** | Both communities pooled together |
 
 Manual weekly input plus three automated pulls. **No WhatsApp API or bot is used
 anywhere**, so there is no ban risk: every number comes either from an official
@@ -50,23 +56,64 @@ Data refreshes on page load once the cache is stale (10 minutes by default) and
 on the **Refresh data** button in the page header. There is no realtime sync and
 no background polling — by design.
 
-### Attributing rows to groups
+### Structure and attribution — all in one file
 
-All the join keys live in one place, [`lib/groups.ts`](lib/groups.ts):
+Communities, their groups, and every join key against the three data sources live
+in [`lib/groups.ts`](lib/groups.ts). Nothing else reads them.
 
 ```ts
 {
   slug: 'uk',
-  sheetCountry: ['UK', 'United Kingdom', 'GB', …],  // matches the sheet's country column
+  community: 'community-1',                          // which community it belongs to
+  sheetCountry: ['UK', 'United Kingdom', 'GB', …],   // matches the sheet's country column
   utmCampaigns: ['community_uk', 'wa_community_uk'], // matches GA4 + sheet campaigns
   shortioTag: 'community-uk',                        // tag on the group's Short.io links
+  demo: { members: 842, growth: 0.041, leads: 34, universities: […] },
 }
 ```
 
-Edit those to match your actual sheet values, UTM naming and Short.io tags.
-Nothing else reads them. Sheet **columns are matched by header name, not
-position**, so the sheet can be reordered freely (aliases are listed in
-`.env.example`).
+Group slugs are globally unique across communities, so a stored weekly entry
+needs no community column — the group identifies it. Sheet **columns are matched
+by header name, not position**, so the sheet can be reordered freely (aliases are
+listed in `.env.example`).
+
+**Attribution is exclusive.** Each registration counts towards exactly one group:
+UTM campaign first, then country. This matters with two communities — a
+2026-intake member who lists "UK" as their destination would otherwise match both
+that cohort (by campaign) and Community #1's UK group (by country), and be
+counted twice in the merged totals.
+
+### Adding segments to Community #2
+
+Community #2 currently has a single community-wide segment, because its real
+subdivisions (if any) aren't known yet. To add them:
+
+1. Add each new slug to `GroupSlug` in [`lib/types.ts`](lib/types.ts).
+2. Copy the segment object in `COMMUNITY_2_GROUPS` and set `slug`, `label`,
+   `utmCampaigns` and `shortioTag`.
+
+That's it. Overview cards, the comparison table, trends, the entry form and the
+merged roll-up all pick them up with no further changes, and the Comparison page
+appears automatically once a community has two or more groups. `sheetCountry` is
+empty for this community on purpose — it's global, so its registrations are
+attributed by campaign, never by country.
+
+### What Community #2 needs from you
+
+Nothing is required to run it — it ships with demo data like everything else. To
+make it real, provide any of these:
+
+| What | Where it goes | Notes |
+|---|---|---|
+| **Its segments**, if it has any | `COMMUNITY_2_GROUPS` | Names only; I'll wire them up |
+| **UTM campaign name(s)** | `utmCampaigns` | The exact string in GA4 / the sheet's campaign column |
+| **Short.io tag** | `shortioTag` | The tag on that community's tracked links |
+| **Current member count** | the weekly form | Or a starting number and I'll seed it |
+| **Weekly history**, if you have it | the weekly form, one week at a time | Member count, polls, DMs sent/replies, activity, notes — same format as Community #1 |
+
+The weekly entry format is identical for both communities, so there's nothing new
+to learn: member count, poll question + option counts, DMs sent, DM replies,
+activity level, notes.
 
 Lead-source buckets — Instagram, refer-a-friend, scholarship teams, community
 banners — are also defined in `lib/groups.ts` (`LEAD_SOURCE_BUCKETS`). Anything
@@ -108,21 +155,43 @@ DM counts are *not* pre-filled — a stale DM number would silently become a wro
 data point — but last week's volume is shown as placeholder text.
 
 Rates in roll-ups are computed from summed numerators and denominators, not by
-averaging five percentages: averaging would weight a 274-member group the same as
-an 1,130-member one.
+averaging percentages: averaging would weight a 274-member group the same as an
+1,130-member one, and would be wrong again in the merged view, where a
+969-member cohort would pull the combined rate as hard as a 4,398-member
+community. This holds at every level — group, community, and merged — including
+the per-week values behind the merged trend chart.
 
 ## Pages
 
-- **Overview** — all five groups side by side: members, new members, activity
-  level, leads this week. Plus pooled totals, this week's notes, and which groups
-  still need an entry.
+The sidebar has two levels: a scope switcher (Community #1 / Community #2 /
+Merged), then the navigation for whichever scope is selected. Scope is read from
+the URL, so any view can be linked to directly.
+
+**Per community** — `/c/community-1`, `/c/community-2`:
+
+- **Overview** — the community's groups side by side (members, new members,
+  activity level, leads), its pooled totals, this week's notes, and which of its
+  groups still need an entry.
 - **Group detail** (one per group) — weekly stat cards with sparklines, leads by
   source, GA4 traffic trend, member and poll-rate trends, full poll history, and
   the weekly entry form.
-- **Comparison** — all five groups as rows, every metric as a sortable column,
-  plus a member-growth overlay across all five.
-- **Trends** — any metric over 4 or 8 weeks, viewed as all five overlaid, as
-  small multiples, or one group at a time.
+- **Comparison** — the community's groups as rows, every metric as a sortable
+  column, plus a member-growth overlay. Hidden for a community with one group,
+  since there is nothing to compare.
+- **Trends** — any metric over 4 or 8 weeks, overlaid, as small multiples, or one
+  group at a time.
+
+**Merged** — `/merged`:
+
+- **Combined overview** — total members, leads this week, poll response rate and
+  DM reply rate pooled across both communities, then a roll-up card per community
+  and a member-growth chart with one line per community.
+- **All groups** — every group from both communities in one sortable table with a
+  community column, plus per-community subtotals.
+- **Trends** — the same metrics at community level, one series per community.
+
+Old URLs (`/group/uk`, `/comparison`, `/trends`) redirect to their Community #1
+equivalents, so existing links keep working.
 
 ## Design notes
 
@@ -158,20 +227,26 @@ rather than the series colour.
 
 ```
 app/
-  page.tsx                  Overview
-  group/[slug]/page.tsx     Group detail
-  comparison/page.tsx       Cross-community table + overlay
-  trends/page.tsx           Metric explorer
+  page.tsx                        Redirects to the first community
+  c/[community]/page.tsx          Community overview
+  c/[community]/group/[slug]/     Group detail
+  c/[community]/comparison/       Cross-group table + overlay
+  c/[community]/trends/           Metric explorer
+  merged/page.tsx                 Combined overview, both communities
+  merged/comparison/              Every group + community subtotals
+  merged/trends/                  Metrics at community level
+  group/[slug], comparison/,      Legacy redirects to Community #1
+    trends/
   api/entries/              GET / POST weekly entries, DELETE by id
   api/refresh/              POST forces a re-pull of all three sources
   globals.css               The whole design system
 lib/
-  groups.ts                 The 5 groups + all join keys and source buckets
+  groups.ts                 Communities, groups, join keys, source buckets
   types.ts                  Shared types
   weeks.ts                  Monday-anchored week maths, all in UTC
   store.ts                  JSON-file / Supabase persistence
   metrics.ts                Every derived metric and formatter
-  dashboard.ts              The one loader every page uses
+  dashboard.ts              The one loader every page uses, plus roll-ups
   demo.ts                   Deterministic demo data (seeded, never random)
   integrations/             sheets · ga4 · shortio · cache
 components/                 Charts, stat tiles, tables, the entry form

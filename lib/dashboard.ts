@@ -1,4 +1,4 @@
-import { GROUPS } from './groups';
+import { COMMUNITIES, GROUPS, groupsOf } from './groups';
 import { getEntries, isShowingDemoEntries } from './store';
 import { getSnapshot } from './integrations';
 import {
@@ -10,10 +10,12 @@ import {
 } from './metrics';
 import { currentWeekStart, lastNWeeks } from './weeks';
 import type {
+  CommunitySlug,
   GroupSlug,
   GroupWeekMetrics,
   IntegrationSnapshot,
   MetricKey,
+  RollupTotals,
   TrendRow,
   WeeklyEntry,
 } from './types';
@@ -22,8 +24,10 @@ import type {
  * One loader shared by every page: manual entries + the three automated pulls,
  * assembled into the week being displayed and a trailing trend window.
  *
- * Pages call this instead of touching the store or integrations directly, so the
- * definition of "the week we're looking at" stays in one place.
+ * Loading is deliberately NOT scoped to a community — it always covers every
+ * group in every community, and pages slice it. That keeps the merged roll-up a
+ * filter rather than a second data path, so a community can never be silently
+ * missing from a combined total.
  */
 
 export const TREND_WINDOW = 8;
@@ -35,7 +39,7 @@ export interface DashboardData {
   displayWeek: string;
   /** Trailing window ending at displayWeek, oldest first. */
   weeks: string[];
-  /** Current-week metrics for all five groups, in sidebar order. */
+  /** Current-week metrics for every group in every community. */
   perGroup: GroupWeekMetrics[];
   /** True when weekly entries are demo seed data rather than saved entries. */
   demoEntries: boolean;
@@ -62,6 +66,17 @@ export async function loadDashboard(): Promise<DashboardData> {
   };
 }
 
+/** Current-week metrics for one community's groups, in display order. */
+export function groupsInCommunity(
+  data: DashboardData,
+  community: CommunitySlug,
+): GroupWeekMetrics[] {
+  const order = groupsOf(community).map((g) => g.slug);
+  return order
+    .map((slug) => data.perGroup.find((m) => m.group === slug))
+    .filter((m): m is GroupWeekMetrics => m !== undefined);
+}
+
 /** The trailing series for one group, oldest week first. */
 export function groupSeries(
   data: DashboardData,
@@ -78,33 +93,22 @@ export function entryWeekOptions(count = TREND_WINDOW): string[] {
 
 /* --------------------------------------------------------- roll-ups & series */
 
-export interface OverviewTotals {
-  members: number;
-  newMembers: number;
-  leads: number;
-  sessions: number;
-  /** Responses ÷ members, pooled across all five groups. */
-  pollResponseRatePct: number | null;
-  /** Replies ÷ DMs sent, pooled across all five groups. */
-  dmReplyRatePct: number | null;
-  /** Leads ÷ sessions, pooled. */
-  leadConversionPct: number | null;
-  groupsWithEntry: number;
-}
-
 /**
- * Pooled totals across the five groups. Rates are computed from summed
- * numerators and denominators, not by averaging five percentages — averaging
- * rates would weight a 274-member group the same as an 1,130-member one.
+ * Pooled totals over any set of groups.
+ *
+ * Rates are computed from summed numerators and denominators, not by averaging
+ * percentages — averaging would weight a 274-member group the same as an
+ * 1,130-member one, and would be wrong again when pooling two communities of
+ * very different sizes.
  */
-export function overviewTotals(perGroup: GroupWeekMetrics[]): OverviewTotals {
-  const members = perGroup.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
-  const newMembers = perGroup.reduce((s, m) => s + (m.newMembers ?? 0), 0);
-  const leads = perGroup.reduce((s, m) => s + m.totalLeads, 0);
-  const sessions = perGroup.reduce((s, m) => s + m.totalSessions, 0);
-  const responses = perGroup.reduce((s, m) => s + m.pollResponses, 0);
-  const dmsSent = perGroup.reduce((s, m) => s + m.dmsSent, 0);
-  const dmReplies = perGroup.reduce((s, m) => s + m.dmReplies, 0);
+export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
+  const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
+  const newMembers = metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0);
+  const leads = metrics.reduce((s, m) => s + m.totalLeads, 0);
+  const sessions = metrics.reduce((s, m) => s + m.totalSessions, 0);
+  const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
+  const dmsSent = metrics.reduce((s, m) => s + m.dmsSent, 0);
+  const dmReplies = metrics.reduce((s, m) => s + m.dmReplies, 0);
 
   return {
     members,
@@ -114,29 +118,126 @@ export function overviewTotals(perGroup: GroupWeekMetrics[]): OverviewTotals {
     pollResponseRatePct: pct(responses, members),
     dmReplyRatePct: pct(dmReplies, dmsSent),
     leadConversionPct: pct(leads, sessions),
-    groupsWithEntry: perGroup.filter((m) => m.entry !== null).length,
+    groupsWithEntry: metrics.filter((m) => m.entry !== null).length,
+    groupCount: metrics.length,
   };
+}
+
+/** Pooled totals for one community. */
+export function communityTotals(
+  data: DashboardData,
+  community: CommunitySlug,
+): RollupTotals {
+  return rollup(groupsInCommunity(data, community));
+}
+
+/** Pooled totals across every community — the merged view's headline figures. */
+export function mergedTotals(data: DashboardData): RollupTotals {
+  return rollup(data.perGroup);
+}
+
+/** Per-community roll-ups, in registry order. */
+export function perCommunityTotals(
+  data: DashboardData,
+): { community: CommunitySlug; totals: RollupTotals }[] {
+  return COMMUNITIES.map((c) => ({
+    community: c.slug,
+    totals: communityTotals(data, c.slug),
+  }));
 }
 
 /** Rows shaped for the multi-series charts: one row per week, one key per group. */
 export function multiGroupRows(
   data: DashboardData,
   metric: MetricKey,
+  groups: GroupSlug[],
   weeks: string[] = data.weeks,
 ): TrendRow[] {
   const seriesByGroup = new Map<GroupSlug, GroupWeekMetrics[]>();
-  for (const group of GROUPS) {
-    seriesByGroup.set(group.slug, groupSeries(data, group.slug, weeks));
+  for (const slug of groups) {
+    seriesByGroup.set(slug, groupSeries(data, slug, weeks));
   }
 
   return weeks.map((week, index) => {
     const row: TrendRow = { week };
-    for (const group of GROUPS) {
-      const metrics = seriesByGroup.get(group.slug)?.[index];
-      row[group.slug] = metrics ? metricOf(metrics, metric) : null;
+    for (const slug of groups) {
+      const metrics = seriesByGroup.get(slug)?.[index];
+      row[slug] = metrics ? metricOf(metrics, metric) : null;
     }
     return row;
   });
+}
+
+/**
+ * Rows for the merged view's trend chart: one series per community, each the
+ * pooled value of its groups for that week.
+ */
+export function multiCommunityRows(
+  data: DashboardData,
+  metric: MetricKey,
+  weeks: string[] = data.weeks,
+): TrendRow[] {
+  const seriesByCommunity = new Map<CommunitySlug, GroupWeekMetrics[][]>();
+  for (const community of COMMUNITIES) {
+    seriesByCommunity.set(
+      community.slug,
+      community.groups.map((g) => groupSeries(data, g.slug, weeks)),
+    );
+  }
+
+  return weeks.map((week, index) => {
+    const row: TrendRow = { week };
+    for (const community of COMMUNITIES) {
+      const weekMetrics = (seriesByCommunity.get(community.slug) ?? [])
+        .map((series) => series[index])
+        .filter((m): m is GroupWeekMetrics => m !== undefined);
+      row[community.slug] = pooledMetric(weekMetrics, metric);
+    }
+    return row;
+  });
+}
+
+/**
+ * One pooled value for a set of groups in a single week. Counts sum; rates are
+ * recomputed from their own numerators and denominators rather than averaged.
+ */
+function pooledMetric(metrics: GroupWeekMetrics[], key: MetricKey): number | null {
+  if (metrics.length === 0) return null;
+
+  switch (key) {
+    case 'totalMembers':
+    case 'newMembers':
+    case 'totalLeads':
+    case 'totalSessions': {
+      const values = metrics
+        .map((m) => metricOf(m, key))
+        .filter((v): v is number => v !== null);
+      return values.length === 0 ? null : values.reduce((s, v) => s + v, 0);
+    }
+    case 'memberGrowthPct': {
+      // Growth over the pooled base, not the mean of five growth rates.
+      const withPrev = metrics.filter((m) => m.previousEntry !== null && m.entry !== null);
+      if (withPrev.length === 0) return null;
+      const base = withPrev.reduce((s, m) => s + (m.previousEntry?.totalMembers ?? 0), 0);
+      const added = withPrev.reduce(
+        (s, m) => s + ((m.entry?.totalMembers ?? 0) - (m.previousEntry?.totalMembers ?? 0)),
+        0,
+      );
+      return pct(added, base);
+    }
+    case 'pollResponseRatePct': {
+      const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
+      const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
+      return pct(responses, members);
+    }
+    case 'dmReplyRatePct': {
+      const replies = metrics.reduce((s, m) => s + m.dmReplies, 0);
+      const sent = metrics.reduce((s, m) => s + m.dmsSent, 0);
+      return pct(replies, sent);
+    }
+    default:
+      return null;
+  }
 }
 
 function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {

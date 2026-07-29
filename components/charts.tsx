@@ -120,6 +120,20 @@ function makeEndLabel(text: string, targetIndex: number, emphasis: boolean) {
  */
 const MIN_LABEL_GAP = 15;
 
+/**
+ * Right margin wide enough for the longest direct end label.
+ *
+ * The default 62px fits a short group name like "Australia" but clips longer
+ * ones ("Community #1"), and a clipped label is worse than none. The estimate is
+ * per-character and deliberately generous — the focused series is drawn bold, so
+ * it is wider than the others, and over-reserving only trims the plot slightly
+ * while under-reserving crops text.
+ */
+function rightMarginFor(labels: string[]): number {
+  const longest = labels.reduce((max, l) => Math.max(max, l.length), 0);
+  return Math.max(MARGIN_WITH_LABELS.right, Math.ceil(longest * 7.8) + 20);
+}
+
 function pickEndLabels(
   series: MultiSeries[],
   rows: MultiRow[],
@@ -333,6 +347,10 @@ export function MultiGroupTrend({
   ];
 
   const lastRow = rows[rows.length - 1];
+  const margin = {
+    ...MARGIN_WITH_LABELS,
+    right: rightMarginFor(series.filter((s) => labelled.has(s.key)).map((s) => s.label)),
+  };
 
   return (
     <div className="chartFrame">
@@ -358,7 +376,7 @@ export function MultiGroupTrend({
       </div>
 
       <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={rows} margin={MARGIN_WITH_LABELS}>
+        <ComposedChart data={rows} margin={margin}>
           <CartesianGrid stroke={CHART.GRID} strokeWidth={1} vertical={false} />
           <XAxis
             dataKey="week"

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { GROUPS } from '@/lib/groups';
+import { COMMUNITIES } from '@/lib/groups';
 
 export default function NotFound() {
   return (
@@ -8,16 +8,37 @@ export default function NotFound() {
         Page not found
       </h1>
       <p className="muted" style={{ marginTop: 0 }}>
-        That view doesn’t exist. Five communities are tracked here:
+        That view doesn’t exist. These reports are available:
       </p>
+
+      {COMMUNITIES.map((community) => (
+        <div key={community.slug} style={{ marginBottom: 16 }}>
+          <div className="sectionTitle" style={{ marginTop: 0 }}>
+            {community.label} — {community.name}
+          </div>
+          <div className="row">
+            <Link href={`/c/${community.slug}`} className="btn btn--sm btn--dark">
+              Overview
+            </Link>
+            {community.groups.map((group) => (
+              <Link
+                key={group.slug}
+                href={`/c/${community.slug}/group/${group.slug}`}
+                className="btn btn--sm"
+              >
+                {group.flag} {group.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <div className="sectionTitle" style={{ marginTop: 0 }}>
+        Merged
+      </div>
       <div className="row">
-        {GROUPS.map((group) => (
-          <Link key={group.slug} href={`/group/${group.slug}`} className="btn btn--sm">
-            {group.flag} {group.label}
-          </Link>
-        ))}
-        <Link href="/" className="btn btn--sm btn--dark">
-          Overview
+        <Link href="/merged" className="btn btn--sm btn--primary">
+          Combined report
         </Link>
       </div>
     </div>

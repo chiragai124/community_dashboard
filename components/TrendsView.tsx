@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { GroupSlug, MetricKey } from '@/lib/types';
+import { singularize } from '@/lib/groups';
 import { MultiGroupTrend, SingleTrendChart, SmallMultiplesTrend, type MultiRow, type MultiSeries, type Unit } from './charts';
 
 /**
@@ -26,15 +27,22 @@ export function TrendsView({
   rowsByMetric,
   series,
   defaultGroup,
+  seriesNoun = 'groups',
 }: {
   metrics: TrendMetric[];
   /** Full-window rows per metric, oldest week first. */
   rowsByMetric: Record<string, MultiRow[]>;
   series: MultiSeries[];
-  defaultGroup: GroupSlug;
+  defaultGroup: GroupSlug | string;
+  /** What the series are called — "groups", "segments", "communities". */
+  seriesNoun?: string;
 }) {
+  // With one series there is nothing to overlay or facet, so the view toggle is
+  // hidden and it opens on the single-series chart.
+  const multi = series.length > 1;
+
   const [metricKey, setMetricKey] = useState<MetricKey>(metrics[0]?.key ?? 'totalMembers');
-  const [view, setView] = useState<ViewMode>('overlay');
+  const [view, setView] = useState<ViewMode>(multi ? 'overlay' : 'single');
   const [group, setGroup] = useState<string>(defaultGroup);
   const [weeks, setWeeks] = useState<4 | 8>(8);
 
@@ -79,34 +87,36 @@ export function TrendsView({
         </div>
 
         <div className="card__head" style={{ flexWrap: 'wrap', rowGap: 10 }}>
-          <div className="segmented" role="group" aria-label="View">
-            <button
-              type="button"
-              className={`segmented__btn${view === 'overlay' ? ' segmented__btn--active' : ''}`}
-              aria-pressed={view === 'overlay'}
-              onClick={() => setView('overlay')}
-            >
-              All 5 overlaid
-            </button>
-            <button
-              type="button"
-              className={`segmented__btn${view === 'multiples' ? ' segmented__btn--active' : ''}`}
-              aria-pressed={view === 'multiples'}
-              onClick={() => setView('multiples')}
-            >
-              Small multiples
-            </button>
-            <button
-              type="button"
-              className={`segmented__btn${view === 'single' ? ' segmented__btn--active' : ''}`}
-              aria-pressed={view === 'single'}
-              onClick={() => setView('single')}
-            >
-              Single group
-            </button>
-          </div>
+          {multi ? (
+            <div className="segmented" role="group" aria-label="View">
+              <button
+                type="button"
+                className={`segmented__btn${view === 'overlay' ? ' segmented__btn--active' : ''}`}
+                aria-pressed={view === 'overlay'}
+                onClick={() => setView('overlay')}
+              >
+                All {series.length} overlaid
+              </button>
+              <button
+                type="button"
+                className={`segmented__btn${view === 'multiples' ? ' segmented__btn--active' : ''}`}
+                aria-pressed={view === 'multiples'}
+                onClick={() => setView('multiples')}
+              >
+                Small multiples
+              </button>
+              <button
+                type="button"
+                className={`segmented__btn${view === 'single' ? ' segmented__btn--active' : ''}`}
+                aria-pressed={view === 'single'}
+                onClick={() => setView('single')}
+              >
+                Single {singularize(seriesNoun)}
+              </button>
+            </div>
+          ) : null}
 
-          {view === 'single' ? (
+          {view === 'single' && multi ? (
             <div className="segmented" role="group" aria-label="Group">
               {series.map((s) => (
                 <button
