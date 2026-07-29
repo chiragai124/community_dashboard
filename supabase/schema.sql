@@ -26,6 +26,12 @@ create table if not exists public.weekly_entries (
   dms_sent             integer not null default 0 check (dms_sent >= 0),
   dm_replies           integer not null default 0 check (dm_replies >= 0),
   activity_level       text not null default 'Medium' check (activity_level in ('Low','Medium','High')),
+  -- Qualitative fields. Lists are jsonb arrays of short strings; the app also
+  -- accepts a comma/newline-separated string and splits it.
+  activity_note        text not null default '',
+  main_topics          jsonb not null default '[]'::jsonb,
+  common_questions     jsonb not null default '[]'::jsonb,
+  content_response     text not null default '',
   notes                text not null default '',
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
@@ -43,14 +49,21 @@ create index if not exists weekly_entries_group_week_idx on public.weekly_entrie
 alter table public.weekly_entries enable row level security;
 
 -- ---------------------------------------------------------------------------
--- MIGRATION — only if you ran an earlier version of this file
+-- MIGRATIONS — only if you ran an earlier version of this file
 --
--- The first version constrained group_slug to the five Community #1 slugs:
---   check (group_slug in ('uk','usa','australia','canada','germany'))
--- That constraint rejects Community #2's segments. Drop it once:
+-- 1. The first version constrained group_slug to the five Community #1 slugs:
+--      check (group_slug in ('uk','usa','australia','canada','germany'))
+--    That constraint rejects Community #2's segments. Drop it once:
 --
---   alter table public.weekly_entries
---     drop constraint if exists weekly_entries_group_slug_check;
+--      alter table public.weekly_entries
+--        drop constraint if exists weekly_entries_group_slug_check;
 --
--- Nothing else changed, and no data needs rewriting.
+-- 2. The four qualitative fields were added later. Existing rows get the
+--    defaults, so nothing needs rewriting:
+--
+--      alter table public.weekly_entries
+--        add column if not exists activity_note    text  not null default '',
+--        add column if not exists main_topics      jsonb not null default '[]'::jsonb,
+--        add column if not exists common_questions jsonb not null default '[]'::jsonb,
+--        add column if not exists content_response text  not null default '';
 -- ---------------------------------------------------------------------------

@@ -59,6 +59,23 @@ function sortEntries(entries: WeeklyEntry[]): WeeklyEntry[] {
   });
 }
 
+/**
+ * Coerce a stored value into a clean list of short strings.
+ *
+ * Accepts an array (the normal case) or a single string, which is split on
+ * commas and newlines — so a value hand-edited into the JSON file as
+ * "Scholarships, Visa process" still loads as two items. Blank entries are
+ * dropped and each item is trimmed.
+ */
+function toStringList(value: unknown): string[] {
+  const items = Array.isArray(value)
+    ? value.map((v) => String(v ?? ''))
+    : typeof value === 'string'
+      ? value.split(/[,\n]/)
+      : [];
+  return items.map((s) => s.trim()).filter((s) => s !== '');
+}
+
 /** Coerce anything that came off the wire or out of a JSON file into an entry. */
 function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
   const group = raw.group;
@@ -115,6 +132,12 @@ function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
     dmsSent: Math.max(0, Math.round(num(raw.dmsSent ?? raw.dms_sent))),
     dmReplies: Math.max(0, Math.round(num(raw.dmReplies ?? raw.dm_replies))),
     activityLevel,
+    // The four qualitative fields were added after the first entries were saved,
+    // so every one of them falls back to empty. An older row stays valid.
+    activityNote: String(raw.activityNote ?? raw.activity_note ?? ''),
+    mainTopics: toStringList(raw.mainTopics ?? raw.main_topics),
+    commonQuestions: toStringList(raw.commonQuestions ?? raw.common_questions),
+    contentResponse: String(raw.contentResponse ?? raw.content_response ?? ''),
     notes: String(raw.notes ?? ''),
     createdAt: String(raw.createdAt ?? raw.created_at ?? now),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? now),
@@ -186,6 +209,10 @@ function toSupabaseRow(entry: WeeklyEntry): Record<string, unknown> {
     dms_sent: entry.dmsSent,
     dm_replies: entry.dmReplies,
     activity_level: entry.activityLevel,
+    activity_note: entry.activityNote,
+    main_topics: entry.mainTopics,
+    common_questions: entry.commonQuestions,
+    content_response: entry.contentResponse,
     notes: entry.notes,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
@@ -255,6 +282,10 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
     ...input,
     polls: input.polls ?? [],
     activityLevel: input.activityLevel ?? 'Medium',
+    activityNote: input.activityNote ?? '',
+    mainTopics: input.mainTopics ?? [],
+    commonQuestions: input.commonQuestions ?? [],
+    contentResponse: input.contentResponse ?? '',
     notes: input.notes ?? '',
   } as Record<string, unknown>);
 

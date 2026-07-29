@@ -101,6 +101,14 @@ export interface WeeklyEntry {
   dmsSent: number;
   dmReplies: number;
   activityLevel: ActivityLevel;
+  /** Why the activity level is what it is — sits beside the badge. */
+  activityNote: string;
+  /** What the week was mostly about, e.g. ['Scholarships', 'Visa process']. */
+  mainTopics: string[];
+  /** What students asked most that week, one entry per question. */
+  commonQuestions: string[];
+  /** How students responded to posted content — polls, announcements, media. */
+  contentResponse: string;
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -116,6 +124,10 @@ export interface WeeklyEntryInput {
   dmsSent?: number;
   dmReplies?: number;
   activityLevel?: ActivityLevel;
+  activityNote?: string;
+  mainTopics?: string[];
+  commonQuestions?: string[];
+  contentResponse?: string;
   notes?: string;
 }
 
