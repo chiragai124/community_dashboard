@@ -2,42 +2,14 @@ import { google } from 'googleapis';
 import type { IntegrationState, Registration } from '../types';
 import { googleAuth, hasGoogleCreds } from './google-auth';
 import { demoRegistrations } from '../demo';
+import { REQUIRED_FIELDS, mapColumns, missingColumnsMessage } from './sheet-columns';
 
 /**
  * Registration data from the Google Sheet.
  *
- * Column matching is by header name, not position, so the sheet's columns can
- * be reordered without breaking anything. Each entry below lists the header
- * aliases accepted for that field (compared lowercase, non-alphanumerics stripped).
+ * Header-to-field matching lives in ./sheet-columns.ts — add an alias there when
+ * a sheet names a column differently, rather than renaming the sheet.
  */
-const COLUMN_ALIASES: Record<keyof Registration, string[]> = {
-  name: ['name', 'fullname', 'studentname', 'firstname'],
-  email: ['email', 'emailaddress', 'mail'],
-  country: ['country', 'destination', 'destinationcountry', 'countryofstudy'],
-  university: ['university', 'universityname', 'college', 'school'],
-  utmSource: ['utmsource', 'source'],
-  utmMedium: ['utmmedium', 'medium'],
-  utmCampaign: ['utmcampaign', 'campaign'],
-  timestamp: ['timestamp', 'date', 'submittedat', 'createdat', 'datetime'],
-};
-
-function normalizeHeader(header: string): string {
-  return header.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-/** header row -> { field: columnIndex } */
-function mapColumns(headers: string[]): Partial<Record<keyof Registration, number>> {
-  const normalized = headers.map(normalizeHeader);
-  const map: Partial<Record<keyof Registration, number>> = {};
-  for (const [field, aliases] of Object.entries(COLUMN_ALIASES) as [
-    keyof Registration,
-    string[],
-  ][]) {
-    const index = normalized.findIndex((h) => aliases.includes(h));
-    if (index !== -1) map[field] = index;
-  }
-  return map;
-}
 
 /**
  * Sheets returns dates as whatever the cell displays. Accept ISO strings,
@@ -120,8 +92,9 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
       };
     }
 
-    const columns = mapColumns((rows[0] as string[]).map((h) => String(h ?? '')));
-    const missing = (['country', 'timestamp'] as const).filter((f) => columns[f] === undefined);
+    const headerRow = (rows[0] as string[]).map((h) => String(h ?? ''));
+    const columns = mapColumns(headerRow);
+    const missing = REQUIRED_FIELDS.filter((f) => columns[f] === undefined);
     if (missing.length > 0) {
       return {
         registrations: [],
@@ -129,7 +102,7 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
           name: 'sheets',
           label: 'Registrations (Sheets)',
           status: 'error',
-          message: `Sheet is missing required column(s): ${missing.join(', ')}. Found: ${(rows[0] as string[]).join(', ')}`,
+          message: missingColumnsMessage(missing, headerRow),
           fetchedAt,
         },
       };
@@ -153,8 +126,22 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
         utmCampaign: cell(row, 'utmCampaign'),
         timestamp: parseTimestamp(cell(row, 'timestamp')),
       }))
-      // A row with no country and no campaign can't be attributed to a group.
-      .filter((r) => r.timestamp !== '' && (r.country !== '' || r.utmCampaign !== ''));
+      // A row without a usable timestamp can't be placed in a week. Country and
+      // campaign are NOT required: attribution (lib/groups.ts) falls back to the
+      // single sheets-fed community, so a sheet with neither column still counts.
+      .filter((r) => r.timestamp !== '');
+
+    // Say plainly which optional columns were not found, so a silently-empty
+    // source breakdown is explainable from the status pill alone.
+    const absent = (['country', 'utmSource', 'utmCampaign'] as const).filter(
+      (f) => columns[f] === undefined,
+    );
+    const note =
+      absent.length > 0
+        ? ` No ${absent.join('/')} column found (accepted names in sheet-columns.ts)${
+            absent.includes('utmSource') ? '; leads group under “Other” by source' : ''
+          }.`
+        : '';
 
     return {
       registrations,
@@ -162,7 +149,7 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
         name: 'sheets',
         label: 'Registrations (Sheets)',
         status: 'live',
-        message: `${registrations.length.toLocaleString('en-US')} registration rows pulled.`,
+        message: `${registrations.length.toLocaleString('en-US')} registration rows pulled.${note}`,
         fetchedAt,
       },
     };

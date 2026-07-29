@@ -92,9 +92,17 @@ every page, roll-up, demo generator and the merged funnel picks it up from
 config, with no integration code changes.
 
 Group slugs are globally unique across communities, so a stored weekly entry
-needs no community column — the group identifies it. Sheet **columns are matched
-by header name, not position**, so the sheet can be reordered freely (aliases are
-listed in `.env.example`).
+needs no community column — the group identifies it.
+
+Sheet **columns are matched by header name, not position**, and matching ignores
+case, spaces and punctuation — so `Targeted country`, `Target Country` and
+`targeted_country` all resolve to the same field. Accepted aliases live in
+[`lib/integrations/sheet-columns.ts`](lib/integrations/sheet-columns.ts) (also
+listed in `.env.example`); **add an alias there rather than renaming a sheet to
+suit the code.** Only `timestamp` is a hard requirement, since it places a row in
+a week — country, UTM and university columns are all optional, and columns the
+dashboard has no field for are ignored. When a required column is missing, the
+Sheets status pill names the field *and* the header names that would satisfy it.
 
 **Attribution is exclusive and coverage-scoped.** Each registration counts
 towards exactly one group: UTM campaign first, then country, considering only
