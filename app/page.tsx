@@ -15,6 +15,10 @@ export default async function OverviewPage() {
 
   const notes = data.perGroup.filter((m) => m.notes.trim() !== '');
   const missing = data.perGroup.filter((m) => m.entry === null);
+  const movers = [...data.perGroup]
+    .filter((m) => m.memberGrowthPct !== null)
+    .sort((a, b) => (b.memberGrowthPct ?? 0) - (a.memberGrowthPct ?? 0))
+    .slice(0, 3);
 
   return (
     <>
@@ -146,25 +150,27 @@ export default async function OverviewPage() {
           </section>
         </div>
 
-        <h2 className="sectionTitle">Fastest movers this week</h2>
-        <div className="grid grid--stats">
-          {[...data.perGroup]
-            .filter((m) => m.memberGrowthPct !== null)
-            .sort((a, b) => (b.memberGrowthPct ?? 0) - (a.memberGrowthPct ?? 0))
-            .slice(0, 3)
-            .map((metrics, index) => {
-              const group = getGroup(metrics.group);
-              return (
-                <StatCardPercentDelta
-                  key={metrics.group}
-                  label={`${index + 1}. ${group?.label ?? metrics.group} member growth`}
-                  value={formatPercent(metrics.memberGrowthPct)}
-                  hint={`${formatSigned(metrics.newMembers)} new members`}
-                  accent={index === 0}
-                />
-              );
-            })}
-        </div>
+        {/* Needs at least two weeks of entries to rank anything — hidden rather
+            than left as a heading over an empty row. */}
+        {movers.length > 0 ? (
+          <>
+            <h2 className="sectionTitle">Fastest movers this week</h2>
+            <div className="grid grid--stats">
+              {movers.map((metrics, index) => {
+                const group = getGroup(metrics.group);
+                return (
+                  <StatCardPercentDelta
+                    key={metrics.group}
+                    label={`${index + 1}. ${group?.label ?? metrics.group} member growth`}
+                    value={formatPercent(metrics.memberGrowthPct)}
+                    hint={`${formatSigned(metrics.newMembers)} new members`}
+                    accent={index === 0}
+                  />
+                );
+              })}
+            </div>
+          </>
+        ) : null}
       </div>
     </>
   );

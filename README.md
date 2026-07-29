@@ -19,7 +19,13 @@ npm run dev          # http://localhost:3000
 It works immediately with no configuration. With no credentials and no saved
 entries, the dashboard runs on eight weeks of deterministic demo data and labels
 it as demo on every affected surface — so you can see the real layout before
-wiring anything up. Your first saved entry replaces the demo history.
+wiring anything up.
+
+**Demo data is never written to disk.** Your first saved entry replaces the demo
+history entirely, rather than being appended to it: once real entries exist the
+demo banner clears, so any demo rows left behind would read as real numbers with
+nothing marking them as invented. Trend charts therefore start sparse and fill in
+week by week.
 
 ```bash
 npm run build && npm start   # production

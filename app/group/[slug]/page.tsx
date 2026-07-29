@@ -26,6 +26,7 @@ export default async function GroupPage({ params }: { params: Promise<{ slug: st
   const series = groupSeries(data, group.slug);
   const pollHistory = buildPollHistory(data.entries, group.slug);
   const groupEntries = data.entries.filter((e) => e.group === group.slug);
+  const hasEarlierEntry = groupEntries.some((e) => e.weekStart < data.displayWeek);
 
   const memberPoints = series.map((m) => ({ week: m.weekStart, value: m.totalMembers }));
   const newMemberPoints = series.map((m) => ({ week: m.weekStart, value: m.newMembers }));
@@ -206,8 +207,9 @@ export default async function GroupPage({ params }: { params: Promise<{ slug: st
             <div>
               <div className="card__title">Add or edit {group.label}’s week</div>
               <div className="card__sub">
-                Pre-filled from last week — edit the member count and the delta is worked out
-                for you
+                {hasEarlierEntry
+                  ? 'Pre-filled from last week — edit the member count and the delta is worked out for you'
+                  : 'First entry for this group — later weeks pre-fill from it automatically'}
               </div>
             </div>
           </div>

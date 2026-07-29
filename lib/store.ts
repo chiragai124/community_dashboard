@@ -123,26 +123,40 @@ function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
 
 /* ------------------------------------------------------------- JSON backend */
 
-async function readJsonFile(): Promise<WeeklyEntry[]> {
+/**
+ * Entries that are genuinely saved on disk. Returns null when the store file
+ * does not exist yet — distinct from an empty array, which means "the file is
+ * there and holds nothing".
+ *
+ * Writes MUST build on this rather than on readJsonFile(), so demo history can
+ * never be persisted and inherit the credibility of real data.
+ */
+async function readPersistedJson(): Promise<WeeklyEntry[] | null> {
   try {
     const text = await fs.readFile(STORE_FILE, 'utf8');
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) return [];
-    seededWithDemo = false;
     return sortEntries(
       parsed.map((row) => normalizeEntry(row as Record<string, unknown>)).filter(
         (e): e is WeeklyEntry => e !== null,
       ),
     );
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
-      // Nothing saved yet — show demo history rather than five empty pages.
-      seededWithDemo = true;
-      return sortEntries(demoEntries());
-    }
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
+}
+
+/** What pages read: persisted entries, or demo history when nothing is saved. */
+async function readJsonFile(): Promise<WeeklyEntry[]> {
+  const persisted = await readPersistedJson();
+  if (persisted !== null) {
+    seededWithDemo = false;
+    return persisted;
+  }
+  // Nothing saved yet — show demo history rather than five empty pages.
+  seededWithDemo = true;
+  return sortEntries(demoEntries());
 }
 
 async function writeJsonFile(entries: WeeklyEntry[]): Promise<void> {
@@ -248,7 +262,15 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
     throw new Error('Invalid entry: a valid group and week start (YYYY-MM-DD) are required.');
   }
 
-  const existing = await getEntry(normalized.group, normalized.weekStart);
+  // Look the existing row up in persisted data only: matching against demo
+  // history would inherit a fabricated createdAt.
+  const persisted = usingSupabase() ? null : await readPersistedJson();
+  const existing = usingSupabase()
+    ? await getEntry(normalized.group, normalized.weekStart)
+    : ((persisted ?? []).find(
+        (e) => e.group === normalized.group && e.weekStart === normalized.weekStart,
+      ) ?? null);
+
   const now = new Date().toISOString();
   const entry: WeeklyEntry = {
     ...normalized,
@@ -262,10 +284,12 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
     return entry;
   }
 
-  // On the very first save, persist the demo history alongside it so charts
-  // keep their trend lines instead of dropping to a single point.
-  const current = await readJsonFile();
-  const others = current.filter(
+  // Deliberately built on persisted data, NOT on readJsonFile(): the first save
+  // must not write demo history to disk. Once saved, the demo banner clears, so
+  // any demo rows persisted here would read as real numbers with nothing marking
+  // them as invented. Trend charts start sparse and fill in week by week —
+  // truthful, and self-correcting.
+  const others = (await readPersistedJson() ?? []).filter(
     (e) => !(e.group === entry.group && e.weekStart === entry.weekStart),
   );
   await writeJsonFile([...others, entry]);
@@ -277,7 +301,9 @@ export async function deleteEntry(id: string): Promise<boolean> {
     await deleteSupabase(id);
     return true;
   }
-  const current = await readJsonFile();
+  // Persisted rows only — deleting one demo row would write the other 39 to disk.
+  const current = await readPersistedJson();
+  if (current === null) return false;
   const next = current.filter((e) => e.id !== id);
   if (next.length === current.length) return false;
   await writeJsonFile(next);
