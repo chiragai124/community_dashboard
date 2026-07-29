@@ -1,0 +1,83 @@
+import Link from 'next/link';
+import type { GroupWeekMetrics } from '@/lib/types';
+import { getGroup } from '@/lib/groups';
+import { formatExact, formatSigned, formatSignedPercent } from '@/lib/metrics';
+import { ActivityBadge } from './StatCard';
+
+/**
+ * One group on the overview grid: member count, new members, activity level and
+ * leads this week — the at-a-glance comparison set.
+ */
+export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
+  const group = getGroup(metrics.group);
+  if (!group) return null;
+
+  const hasEntry = metrics.entry !== null;
+  const growth = metrics.memberGrowthPct;
+  const direction = growth === null ? 'flat' : growth > 0 ? 'up' : growth < 0 ? 'down' : 'flat';
+
+  return (
+    <Link href={`/group/${group.slug}`} className="groupCard">
+      <div className="groupCard__head">
+        <span className="groupCard__flag" aria-hidden="true">
+          {group.flag}
+        </span>
+        <span className="groupCard__name">{group.label}</span>
+        <span className="groupCard__badge">
+          <ActivityBadge level={metrics.activityLevel} />
+        </span>
+      </div>
+
+      <div className="groupCard__body">
+        <div>
+          <div className="groupCard__figure">
+            <span className="groupCard__members">
+              {hasEntry ? formatExact(metrics.totalMembers) : '—'}
+            </span>
+            <span className="groupCard__membersLabel">members</span>
+          </div>
+          {/* Two explicit lines rather than one flex row: at five-across the
+              single line wrapped mid-figure. */}
+          <div className="groupCard__delta">
+            {metrics.newMembers !== null ? (
+              <>
+                <div>
+                  <span className={`delta delta--${direction}`}>
+                    <span className="delta__arrow" aria-hidden="true">
+                      {direction === 'up' ? '▲' : direction === 'down' ? '▼' : '■'}
+                    </span>{' '}
+                    {formatSigned(metrics.newMembers)}
+                  </span>{' '}
+                  <span className="muted">new members</span>
+                </div>
+                <div className="muted">
+                  {growth !== null ? `${formatSignedPercent(growth)} vs last week` : 'vs last week'}
+                </div>
+              </>
+            ) : (
+              <div className="muted">
+                {hasEntry ? 'First week recorded' : 'No entry for this week yet'}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="groupCard__rows">
+          <div className="groupCard__row">
+            <span className="groupCard__rowLabel">Leads this week</span>
+            <span className="groupCard__rowVal">{formatExact(metrics.totalLeads)}</span>
+          </div>
+          <div className="groupCard__row">
+            <span className="groupCard__rowLabel">Site sessions</span>
+            <span className="groupCard__rowVal">{formatExact(metrics.totalSessions)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="groupCard__foot">
+        {hasEntry ? 'View group' : 'Add this week’s numbers'}
+        <span aria-hidden="true">→</span>
+      </div>
+    </Link>
+  );
+}
