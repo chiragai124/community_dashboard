@@ -1,0 +1,30 @@
+{
+  "name": "amber-community-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Engagement and lead performance dashboard for amber's 5 WhatsApp communities (UK, USA, Australia, Canada, Germany)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:41729/git/chiragai124/community_dashboard"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "googleapis": "^173.0.0",
+    "next": "^16.2.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

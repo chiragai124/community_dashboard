@@ -1,0 +1,20 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Local env — never commit credentials
+.env
+.env.local
+.env*.local
+
+# Runtime data: the JSON store accumulates real weekly entries and the
+# integration cache holds pulled API data. Both are machine-local state.
+data/*.json
+!data/demo-seed.json
+
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+npm-debug.log*
