@@ -1,6 +1,7 @@
 import type { IntegrationState, ShortLinkClicks } from '../types';
 import { bucketSource } from '../groups';
 import { demoShortLinks } from '../demo';
+import { SOURCE_TIMEOUT_MS, errorState } from './shared';
 
 /**
  * Short.io tracked-link clicks.
@@ -68,6 +69,8 @@ export async function fetchShortLinks(): Promise<ShortIoResult> {
       const res = await fetch(url.toString(), {
         headers: { accept: 'application/json', authorization: apiKey },
         cache: 'no-store',
+        // A hung request must not hold the page render open.
+        signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
       });
 
       if (!res.ok) {
@@ -115,13 +118,7 @@ export async function fetchShortLinks(): Promise<ShortIoResult> {
   } catch (err) {
     return {
       links: [],
-      state: {
-        name: 'shortio',
-        label: 'Link clicks (Short.io)',
-        status: 'error',
-        message: err instanceof Error ? err.message : 'Unknown Short.io error.',
-        fetchedAt,
-      },
+      state: errorState('shortio', 'Link clicks (Short.io)', err, fetchedAt),
     };
   }
 }

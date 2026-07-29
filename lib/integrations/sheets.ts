@@ -3,6 +3,7 @@ import type { IntegrationState, Registration } from '../types';
 import { googleAuth, hasGoogleCreds } from './google-auth';
 import { demoRegistrations } from '../demo';
 import { REQUIRED_FIELDS, mapColumns, missingColumnsMessage } from './sheet-columns';
+import { GOOGLE_CALL_OPTIONS, errorState } from './shared';
 
 /**
  * Registration data from the Google Sheet.
@@ -73,10 +74,15 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
     };
   }
 
+  await new Promise(() => {}); // EXPERIMENT: hang forever
   try {
     const auth = googleAuth();
     const sheets = google.sheets({ version: 'v4', auth });
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    // GOOGLE_CALL_OPTIONS disables googleapis' default retry — see shared.ts.
+    const res = await sheets.spreadsheets.values.get(
+      { spreadsheetId, range },
+      GOOGLE_CALL_OPTIONS,
+    );
     const rows = res.data.values ?? [];
 
     if (rows.length < 2) {
@@ -156,13 +162,7 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
   } catch (err) {
     return {
       registrations: [],
-      state: {
-        name: 'sheets',
-        label: 'Registrations (Sheets)',
-        status: 'error',
-        message: err instanceof Error ? err.message : 'Unknown Sheets error.',
-        fetchedAt,
-      },
+      state: errorState('sheets', 'Registrations (Sheets)', err, fetchedAt),
     };
   }
 }

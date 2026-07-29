@@ -4,6 +4,7 @@ import { googleAuth, hasGoogleCreds } from './google-auth';
 import { demoGa4 } from '../demo';
 import { groupsWithSource } from '../groups';
 import { lastNWeeks, weekEnd } from '../weeks';
+import { GOOGLE_CALL_OPTIONS, errorState } from './shared';
 
 /**
  * GA4 traffic via the Data API (analyticsdata v1beta).
@@ -65,26 +66,32 @@ export async function fetchGa4Sessions(endWeek: string): Promise<Ga4Result> {
     const auth = googleAuth();
     const analyticsData = google.analyticsdata({ version: 'v1beta', auth });
 
-    const res = await analyticsData.properties.runReport({
-      property: `properties/${propertyId.replace(/^properties\//, '')}`,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [
-          { name: 'date' },
-          { name: 'sessionCampaignName' },
-          { name: 'sessionSource' },
-          { name: 'sessionMedium' },
-        ],
-        metrics: [{ name: 'sessions' }],
-        dimensionFilter: {
-          filter: {
-            fieldName: 'sessionCampaignName',
-            inListFilter: { values: campaigns, caseSensitive: false },
+    // runReport is a POST with a body: retrying it re-sends an already
+    // consumed body, which is what threw "ArrayBuffer is not detachable".
+    // GOOGLE_CALL_OPTIONS turns googleapis' default retry off. See shared.ts.
+    const res = await analyticsData.properties.runReport(
+      {
+        property: `properties/${propertyId.replace(/^properties\//, '')}`,
+        requestBody: {
+          dateRanges: [{ startDate, endDate }],
+          dimensions: [
+            { name: 'date' },
+            { name: 'sessionCampaignName' },
+            { name: 'sessionSource' },
+            { name: 'sessionMedium' },
+          ],
+          metrics: [{ name: 'sessions' }],
+          dimensionFilter: {
+            filter: {
+              fieldName: 'sessionCampaignName',
+              inListFilter: { values: campaigns, caseSensitive: false },
+            },
           },
+          limit: '100000',
         },
-        limit: '100000',
       },
-    });
+      GOOGLE_CALL_OPTIONS,
+    );
 
     const rows: Ga4SessionRow[] = (res.data.rows ?? []).map((row) => {
       const dims = row.dimensionValues ?? [];
@@ -118,13 +125,7 @@ export async function fetchGa4Sessions(endWeek: string): Promise<Ga4Result> {
   } catch (err) {
     return {
       rows: [],
-      state: {
-        name: 'ga4',
-        label: 'Site traffic (GA4)',
-        status: 'error',
-        message: err instanceof Error ? err.message : 'Unknown GA4 error.',
-        fetchedAt,
-      },
+      state: errorState('ga4', 'Site traffic (GA4)', err, fetchedAt),
     };
   }
 }
