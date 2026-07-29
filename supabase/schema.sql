@@ -1,11 +1,21 @@
 -- Manual weekly entries for the Amber Community Dashboard.
 -- Run this once in the Supabase SQL editor, then set SUPABASE_URL and
 -- SUPABASE_SERVICE_ROLE_KEY. Without those the app uses data/weekly-entries.json.
+--
+-- Group slugs are globally unique across communities, so there is no community
+-- column: the group identifies which community an entry belongs to (the mapping
+-- lives in lib/groups.ts). Adding a community therefore needs no migration —
+-- only new slugs.
+--
+-- group_slug is deliberately NOT constrained to a fixed list. An enum-style
+-- CHECK would have to be migrated every time a group or community is added, and
+-- would reject valid rows until it was. Validation happens in the app, which
+-- rejects any slug not present in lib/groups.ts.
 
 create table if not exists public.weekly_entries (
   -- "<group>:<week_start>", so a re-submitted week updates instead of duplicating.
   id                   text primary key,
-  group_slug           text not null check (group_slug in ('uk','usa','australia','canada','germany')),
+  group_slug           text not null,
   -- Always a Monday; the app snaps any date to its week start before saving.
   week_start           date not null,
   total_members        integer not null check (total_members >= 0),
@@ -31,3 +41,16 @@ create index if not exists weekly_entries_group_week_idx on public.weekly_entrie
 -- only, so RLS stays on with no public policies: nothing is reachable from a
 -- browser with the anon key.
 alter table public.weekly_entries enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- MIGRATION — only if you ran an earlier version of this file
+--
+-- The first version constrained group_slug to the five Community #1 slugs:
+--   check (group_slug in ('uk','usa','australia','canada','germany'))
+-- That constraint rejects Community #2's segments. Drop it once:
+--
+--   alter table public.weekly_entries
+--     drop constraint if exists weekly_entries_group_slug_check;
+--
+-- Nothing else changed, and no data needs rewriting.
+-- ---------------------------------------------------------------------------

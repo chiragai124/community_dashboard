@@ -9,7 +9,7 @@ import type {
   Registration,
   WeeklyEntry,
 } from './types';
-import { ALL_SOURCE_LABELS, bucketSource, getGroup } from './groups';
+import { ALL_SOURCE_LABELS, attributeRegistration, bucketSource, getGroup } from './groups';
 import { isInWeek, lastNWeeks, previousWeek } from './weeks';
 
 /**
@@ -54,19 +54,18 @@ export function newMembersFor(
 
 /* --------------------------------------------------- automated-source slices */
 
-/** Registrations belonging to a group, by sheet country or UTM campaign. */
+/**
+ * Registrations belonging to a group.
+ *
+ * Attribution is exclusive — each registration counts towards exactly one group
+ * (campaign first, then country), so the same person can never be counted in
+ * two communities. See attributeRegistration in lib/groups.ts.
+ */
 export function registrationsForGroup(
   registrations: Registration[],
   group: GroupSlug,
 ): Registration[] {
-  const config = getGroup(group);
-  if (!config) return [];
-  const countries = config.sheetCountry.map((c) => c.toLowerCase());
-  const campaigns = config.utmCampaigns.map((c) => c.toLowerCase());
-  return registrations.filter((r) => {
-    if (countries.includes(r.country.trim().toLowerCase())) return true;
-    return campaigns.includes(r.utmCampaign.trim().toLowerCase());
-  });
+  return registrations.filter((r) => attributeRegistration(r) === group);
 }
 
 /** GA4 sessions for a group's campaigns within one week. */
@@ -169,6 +168,7 @@ export function buildGroupWeekMetrics(
 
   return {
     group,
+    community: getGroup(group)?.community ?? 'community-1',
     weekStart,
     entry,
     previousEntry: prev,

@@ -1,21 +1,72 @@
-/** Canonical group identifiers. Order here is the order shown everywhere. */
-export type GroupSlug = 'uk' | 'usa' | 'australia' | 'canada' | 'germany';
+/**
+ * Canonical group identifiers, across every community. Slugs are globally
+ * unique, so a group always identifies exactly one community and stored entries
+ * need no community column of their own.
+ */
+export type GroupSlug =
+  // Community #1 — destination groups
+  | 'uk'
+  | 'usa'
+  | 'australia'
+  | 'canada'
+  | 'germany'
+  // Community #2 — amber global aspirants #2 | 2026 Intake
+  | 'aspirants-2026';
+
+/** Top-level communities. Each is its own report. */
+export type CommunitySlug = 'community-1' | 'community-2';
+
+/** The three things the top-level switcher can select. */
+export type ScopeSlug = CommunitySlug | 'merged';
 
 export type ActivityLevel = 'Low' | 'Medium' | 'High';
 
+/** Seed values for demo mode. Only used when nothing real is configured. */
+export interface DemoProfile {
+  /** Member count at the start of the demo window. */
+  members: number;
+  /** Baseline weekly growth rate, e.g. 0.04 for 4%. */
+  growth: number;
+  /** Baseline weekly lead count. */
+  leads: number;
+  /** Universities to sprinkle through demo registrations. */
+  universities: string[];
+}
+
 export interface GroupConfig {
   slug: GroupSlug;
+  /** The community this group belongs to. */
+  community: CommunitySlug;
   /** Full name, e.g. "United Kingdom". */
   name: string;
   /** Short label used in the sidebar, cards and table rows. */
   label: string;
   flag: string;
-  /** Country value as written in the registration sheet. */
+  /** Country value as written in the registration sheet. Empty for groups that
+   *  are not country-scoped — those are attributed by UTM campaign only. */
   sheetCountry: string[];
   /** UTM campaign(s) that belong to this group — used to filter GA4 + leads. */
   utmCampaigns: string[];
   /** Short.io tag identifying this group's tracked links. */
   shortioTag: string;
+  demo: DemoProfile;
+}
+
+/**
+ * A community: a WhatsApp community tracked as its own report, with its own
+ * overview, metrics and groups. Communities never nest.
+ */
+export interface CommunityConfig {
+  slug: CommunitySlug;
+  /** Full name, shown in page headers. */
+  name: string;
+  /** Short label for the sidebar switcher and table rows. */
+  label: string;
+  /** One line describing what the community is. */
+  description: string;
+  /** What this community calls its subdivisions — "Groups" or "Segments". */
+  groupNoun: string;
+  groups: GroupConfig[];
 }
 
 /** One poll posted in a group during a week. */
@@ -133,9 +184,26 @@ export interface LeadsBySource {
   conversionRate: number | null;
 }
 
+/** Pooled figures for a community, or for every community at once. */
+export interface RollupTotals {
+  members: number;
+  newMembers: number;
+  leads: number;
+  sessions: number;
+  /** Responses ÷ members, pooled across the groups in scope. */
+  pollResponseRatePct: number | null;
+  /** Replies ÷ DMs sent, pooled. */
+  dmReplyRatePct: number | null;
+  /** Leads ÷ sessions, pooled. */
+  leadConversionPct: number | null;
+  groupsWithEntry: number;
+  groupCount: number;
+}
+
 /** Everything one group needs for one week, manual + auto + derived. */
 export interface GroupWeekMetrics {
   group: GroupSlug;
+  community: CommunitySlug;
   weekStart: string;
   entry: WeeklyEntry | null;
   /** Previous week's entry, when one exists. */

@@ -16,6 +16,10 @@ export interface ComparisonRow {
   group: GroupSlug;
   label: string;
   flag: string;
+  /** Link to the group's detail page — community-scoped. */
+  href: string;
+  /** Community label, shown as a column only in the merged view. */
+  communityLabel?: string;
   totalMembers: number | null;
   newMembers: number | null;
   memberGrowthPct: number | null;
@@ -34,6 +38,7 @@ export interface ComparisonRow {
 
 type SortKey =
   | 'label'
+  | 'communityLabel'
   | 'totalMembers'
   | 'newMembers'
   | 'memberGrowthPct'
@@ -53,7 +58,8 @@ const COLUMNS: {
   numeric: boolean;
   title: string;
 }[] = [
-  { key: 'label', label: 'Group', numeric: false, title: 'Community' },
+  { key: 'label', label: 'Group', numeric: false, title: 'Group or segment' },
+  { key: 'communityLabel', label: 'Community', numeric: false, title: 'Parent community' },
   { key: 'totalMembers', label: 'Members', numeric: true, title: 'Member count at week end' },
   { key: 'newMembers', label: 'New', numeric: true, title: 'New members this week' },
   { key: 'memberGrowthPct', label: 'Growth', numeric: true, title: 'Week-over-week member growth' },
@@ -78,12 +84,16 @@ const COLUMNS: {
 
 function sortValue(row: ComparisonRow, key: SortKey): number | string {
   if (key === 'label') return row.label;
+  if (key === 'communityLabel') return row.communityLabel ?? '';
   if (key === 'activityLevel') return row.activityLevel ? ACTIVITY_RANK[row.activityLevel] : 0;
   const value = row[key];
   return value === null || value === undefined ? Number.NEGATIVE_INFINITY : value;
 }
 
 export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
+  // The community column only earns its space when rows span more than one.
+  const showCommunity = new Set(rows.map((r) => r.communityLabel ?? '')).size > 1;
+  const columns = COLUMNS.filter((c) => c.key !== 'communityLabel' || showCommunity);
   const [sortKey, setSortKey] = useState<SortKey>('totalMembers');
   const [descending, setDescending] = useState(true);
 
@@ -122,7 +132,7 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
         <table className="data">
           <thead>
             <tr>
-              {COLUMNS.map((col) => (
+              {columns.map((col) => (
                 <th key={col.key} className={col.numeric ? 'num' : undefined} title={col.title}>
                   <button
                     type="button"
@@ -145,10 +155,13 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
               return (
                 <tr key={row.group}>
                   <td className="name">
-                    <Link href={`/group/${row.group}`} className={isLeader ? 'tableLead' : undefined}>
+                    <Link href={row.href} className={isLeader ? 'tableLead' : undefined}>
                       <span aria-hidden="true">{row.flag}</span> {row.label}
                     </Link>
                   </td>
+                  {showCommunity ? (
+                    <td className="muted">{row.communityLabel ?? '—'}</td>
+                  ) : null}
                   <td className="num">{formatExact(row.totalMembers)}</td>
                   <td className="num">{formatExact(row.newMembers)}</td>
                   <td className="num">{formatSignedPercent(row.memberGrowthPct)}</td>
@@ -168,7 +181,7 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
         </table>
       </div>
       <div className="tableFoot">
-        Sorted by {COLUMNS.find((c) => c.key === sortKey)?.label}
+        Sorted by {columns.find((c) => c.key === sortKey)?.label}
         {descending ? ', highest first' : ', lowest first'}. Click any column to re-sort.
         {rows.some((r) => !r.hasEntry)
           ? ' Groups without a weekly entry show — for manual metrics.'

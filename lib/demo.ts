@@ -1,6 +1,5 @@
 import type {
   Ga4SessionRow,
-  GroupSlug,
   Registration,
   ShortLinkClicks,
   WeeklyEntry,
@@ -14,7 +13,11 @@ import { addWeeks, currentWeekStart, lastNWeeks, parseISODate, toISODate } from 
  * The dashboard is useful the moment it boots, with no Google or Short.io
  * credentials and no weekly entries typed in yet. Everything produced here is
  * flagged as demo in the UI (a "Demo data" pill on every affected surface) and
- * is replaced the instant real credentials or a real entry arrive.
+ * is replaced the instant real credentials or a real entry arrive. It is never
+ * written to disk — see lib/store.ts.
+ *
+ * Everything is driven off each group's `demo` profile in lib/groups.ts, so a
+ * new group or community gets demo data automatically.
  *
  * There is no Math.random() anywhere: a small seeded PRNG keeps numbers stable
  * across renders and server restarts, so charts don't twitch between reloads.
@@ -49,15 +52,6 @@ function randInt(rand: () => number, min: number, max: number): number {
 function pick<T>(rand: () => number, items: T[]): T {
   return items[Math.floor(rand() * items.length)];
 }
-
-/** Per-group starting scale, so the five communities don't look identical. */
-const GROUP_PROFILE: Record<GroupSlug, { members: number; growth: number; leads: number }> = {
-  uk: { members: 842, growth: 0.041, leads: 34 },
-  usa: { members: 1130, growth: 0.052, leads: 41 },
-  australia: { members: 468, growth: 0.031, leads: 19 },
-  canada: { members: 396, growth: 0.058, leads: 16 },
-  germany: { members: 274, growth: 0.024, leads: 11 },
-};
 
 const POLL_TEMPLATES: { question: string; options: string[] }[] = [
   {
@@ -101,14 +95,6 @@ const LAST_NAMES = [
   'Kumar', 'Dubois', 'Ali', 'Silva', 'Nguyen', 'Kaur', 'Okafor', 'Weber', 'Novak', 'Costa',
 ];
 
-const UNIVERSITIES: Record<GroupSlug, string[]> = {
-  uk: ['University of Manchester', 'UCL', 'University of Leeds', 'Coventry University'],
-  usa: ['Arizona State University', 'NYU', 'Purdue University', 'UT Dallas'],
-  australia: ['University of Melbourne', 'Monash University', 'UNSW', 'RMIT'],
-  canada: ['University of Toronto', 'UBC', 'York University', 'Concordia University'],
-  germany: ['TU Munich', 'RWTH Aachen', 'University of Stuttgart', 'TU Berlin'],
-};
-
 /** UTM source/medium pairs matching the four tracked lead sources. */
 const SOURCE_UTMS: { source: string; medium: string }[] = [
   { source: 'instagram', medium: 'social' },
@@ -120,13 +106,13 @@ const SOURCE_UTMS: { source: string; medium: string }[] = [
 
 /* ------------------------------------------------------------ weekly entries */
 
-/** Eight weeks of manual entries across all five groups. */
+/** Eight weeks of manual entries across every group in every community. */
 export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[] {
   const weeks = lastNWeeks(DEMO_WEEKS, endWeek);
   const entries: WeeklyEntry[] = [];
 
   for (const group of GROUPS) {
-    const profile = GROUP_PROFILE[group.slug];
+    const profile = group.demo;
     const rand = rng(hash(`entries:${group.slug}`));
     let members = profile.members;
 
@@ -198,7 +184,7 @@ export function demoRegistrations(endWeek: string = currentWeekStart()): Registr
   const rows: Registration[] = [];
 
   for (const group of GROUPS) {
-    const profile = GROUP_PROFILE[group.slug];
+    const profile = group.demo;
     const rand = rng(hash(`regs:${group.slug}`));
 
     weeks.forEach((weekStart, weekIndex) => {
@@ -220,8 +206,10 @@ export function demoRegistrations(endWeek: string = currentWeekStart()): Registr
         rows.push({
           name: `${first} ${last}`,
           email: `${first.toLowerCase()}.${last.toLowerCase()}${randInt(rand, 10, 99)}@example.com`,
-          country: group.sheetCountry[0],
-          university: pick(rand, UNIVERSITIES[group.slug]),
+          // Groups with no country list are global — leave country blank so they
+          // are attributed by campaign, exactly as the real pull would be.
+          country: group.sheetCountry[0] ?? '',
+          university: pick(rand, profile.universities),
           utmSource: utm.source,
           utmMedium: utm.medium,
           utmCampaign: group.utmCampaigns[0],
@@ -240,7 +228,7 @@ export function demoGa4(endWeek: string = currentWeekStart()): Ga4SessionRow[] {
   const rows: Ga4SessionRow[] = [];
 
   for (const group of GROUPS) {
-    const profile = GROUP_PROFILE[group.slug];
+    const profile = group.demo;
     const rand = rng(hash(`ga4:${group.slug}`));
 
     weeks.forEach((weekStart, weekIndex) => {
@@ -270,7 +258,7 @@ export function demoShortLinks(): ShortLinkClicks[] {
   const links: ShortLinkClicks[] = [];
 
   for (const group of GROUPS) {
-    const profile = GROUP_PROFILE[group.slug];
+    const profile = group.demo;
     const rand = rng(hash(`shortio:${group.slug}`));
 
     for (const bucket of LEAD_SOURCE_BUCKETS) {
