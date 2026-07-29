@@ -1,4 +1,4 @@
-import { COMMUNITIES, GROUPS, groupsOf } from './groups';
+import { COMMUNITIES, GROUPS, groupsOf, groupsWithSource } from './groups';
 import { getEntries, isShowingDemoEntries } from './store';
 import { getSnapshot } from './integrations';
 import {
@@ -104,11 +104,23 @@ export function entryWeekOptions(count = TREND_WINDOW): string[] {
 export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
   const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
   const newMembers = metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0);
-  const leads = metrics.reduce((s, m) => s + m.totalLeads, 0);
-  const sessions = metrics.reduce((s, m) => s + m.totalSessions, 0);
   const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
   const dmsSent = metrics.reduce((s, m) => s + m.dmsSent, 0);
   const dmReplies = metrics.reduce((s, m) => s + m.dmReplies, 0);
+
+  // Leads/sessions are null on groups without declared source coverage. A
+  // roll-up over only-uncovered groups stays null — Community #1's totals must
+  // say "not measured here", never "0 leads".
+  const leadsCovered = metrics.filter((m) => m.totalLeads !== null);
+  const sessionsCovered = metrics.filter((m) => m.totalSessions !== null);
+  const leads =
+    leadsCovered.length > 0
+      ? leadsCovered.reduce((s, m) => s + (m.totalLeads ?? 0), 0)
+      : null;
+  const sessions =
+    sessionsCovered.length > 0
+      ? sessionsCovered.reduce((s, m) => s + (m.totalSessions ?? 0), 0)
+      : null;
 
   return {
     members,
@@ -117,7 +129,7 @@ export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
     sessions,
     pollResponseRatePct: pct(responses, members),
     dmReplyRatePct: pct(dmReplies, dmsSent),
-    leadConversionPct: pct(leads, sessions),
+    leadConversionPct: leads === null ? null : pct(leads, sessions),
     groupsWithEntry: metrics.filter((m) => m.entry !== null).length,
     groupCount: metrics.length,
   };
@@ -259,6 +271,62 @@ function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {
     default:
       return null;
   }
+}
+
+/* -------------------------------------------------------- traffic & funnel */
+
+export interface TrafficFunnelTotals {
+  /** Lifetime clicks across the scope's tagged Short.io links; null = no coverage. */
+  clicksLifetime: number | null;
+  /** GA4 sessions in the display week; null = no coverage. */
+  sessionsWeek: number | null;
+  /** Sheet registrations in the display week; null = no coverage. */
+  leadsWeek: number | null;
+  /** leads ÷ sessions for the display week, as a percentage. */
+  sessionToLeadPct: number | null;
+}
+
+/**
+ * The combined traffic/funnel layer over the automated sources: Short.io clicks
+ * → GA4 sessions → sheet registrations. Scoped to one community, or — for the
+ * merged view — to every community that declares each source. Since coverage
+ * comes from config, a future community's sources join this roll-up by
+ * declaration alone.
+ */
+export function trafficFunnel(
+  data: DashboardData,
+  community?: CommunitySlug,
+): TrafficFunnelTotals {
+  const inScope = (slug: CommunitySlug) => community === undefined || slug === community;
+
+  const shortioGroups = groupsWithSource('shortio').filter((g) => inScope(g.community));
+  const tags = new Set(shortioGroups.map((g) => g.shortioTag.toLowerCase()));
+  const clicksLifetime =
+    shortioGroups.length > 0
+      ? data.snapshot.shortLinks
+          .filter((link) => tags.has(link.tag.trim().toLowerCase()))
+          .reduce((sum, link) => sum + link.clicks, 0)
+      : null;
+
+  const scoped = data.perGroup.filter((m) => inScope(m.community));
+  const sessionsCovered = scoped.filter((m) => m.totalSessions !== null);
+  const leadsCovered = scoped.filter((m) => m.totalLeads !== null);
+
+  const sessionsWeek =
+    sessionsCovered.length > 0
+      ? sessionsCovered.reduce((s, m) => s + (m.totalSessions ?? 0), 0)
+      : null;
+  const leadsWeek =
+    leadsCovered.length > 0
+      ? leadsCovered.reduce((s, m) => s + (m.totalLeads ?? 0), 0)
+      : null;
+
+  return {
+    clicksLifetime,
+    sessionsWeek,
+    leadsWeek,
+    sessionToLeadPct: leadsWeek === null ? null : pct(leadsWeek, sessionsWeek),
+  };
 }
 
 /** Daily GA4 sessions rolled up per week, for one group. */

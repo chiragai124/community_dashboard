@@ -16,6 +16,9 @@ export type GroupSlug =
 /** Top-level communities. Each is its own report. */
 export type CommunitySlug = 'community-1' | 'community-2';
 
+/** The three automated data sources. */
+export type IntegrationName = 'sheets' | 'ga4' | 'shortio';
+
 /** The three things the top-level switcher can select. */
 export type ScopeSlug = CommunitySlug | 'merged';
 
@@ -66,6 +69,16 @@ export interface CommunityConfig {
   description: string;
   /** What this community calls its subdivisions — "Groups" or "Segments". */
   groupNoun: string;
+  /**
+   * Which automated sources actually represent this community's traffic and
+   * signups. Empty means manual-only: none of the pulled data is attributed to
+   * this community, and its pages show no integration figures at all.
+   *
+   * This is THE attribution switch. When a new community starts getting fed by
+   * a source, add the source name here — nothing in the integration code needs
+   * rewiring.
+   */
+  integrations: IntegrationName[];
   groups: GroupConfig[];
 }
 
@@ -170,7 +183,7 @@ export interface ShortLinkClicks {
 export type IntegrationStatus = 'live' | 'demo' | 'error';
 
 export interface IntegrationState {
-  name: 'sheets' | 'ga4' | 'shortio';
+  name: IntegrationName;
   label: string;
   status: IntegrationStatus;
   message: string;
@@ -200,8 +213,10 @@ export interface LeadsBySource {
 export interface RollupTotals {
   members: number;
   newMembers: number;
-  leads: number;
-  sessions: number;
+  /** Null when no group in scope has Sheets coverage. */
+  leads: number | null;
+  /** Null when no group in scope has GA4 coverage. */
+  sessions: number | null;
   /** Responses ÷ members, pooled across the groups in scope. */
   pollResponseRatePct: number | null;
   /** Replies ÷ DMs sent, pooled. */
@@ -239,10 +254,14 @@ export interface GroupWeekMetrics {
   activityLevel: ActivityLevel | null;
   notes: string;
 
-  /** Registrations attributed to this group in this week. */
-  totalLeads: number;
-  /** GA4 sessions attributed to this group's campaigns in this week. */
-  totalSessions: number;
+  /**
+   * Registrations attributed to this group in this week. Null — not zero —
+   * when the group's community declares no Sheets coverage: "we don't measure
+   * this here" must stay distinguishable from "we measured zero".
+   */
+  totalLeads: number | null;
+  /** GA4 sessions this week; null when the community declares no GA4 coverage. */
+  totalSessions: number | null;
   leadsBySource: LeadsBySource[];
 }
 

@@ -71,16 +71,25 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
           </div>
         </div>
 
-        <div className="groupCard__rows">
-          <div className="groupCard__row">
-            <span className="groupCard__rowLabel">Leads this week</span>
-            <span className="groupCard__rowVal">{formatExact(metrics.totalLeads)}</span>
+        {/* Leads/sessions come from the automated sources, which only cover
+            some communities (null = not measured here). A group with no
+            coverage shows no traffic rows at all rather than misleading zeros. */}
+        {metrics.totalLeads !== null || metrics.totalSessions !== null ? (
+          <div className="groupCard__rows">
+            {metrics.totalLeads !== null ? (
+              <div className="groupCard__row">
+                <span className="groupCard__rowLabel">Leads this week</span>
+                <span className="groupCard__rowVal">{formatExact(metrics.totalLeads)}</span>
+              </div>
+            ) : null}
+            {metrics.totalSessions !== null ? (
+              <div className="groupCard__row">
+                <span className="groupCard__rowLabel">Site sessions</span>
+                <span className="groupCard__rowVal">{formatExact(metrics.totalSessions)}</span>
+              </div>
+            ) : null}
           </div>
-          <div className="groupCard__row">
-            <span className="groupCard__rowLabel">Site sessions</span>
-            <span className="groupCard__rowVal">{formatExact(metrics.totalSessions)}</span>
-          </div>
-        </div>
+        ) : null}
       </div>
 
       </Link>

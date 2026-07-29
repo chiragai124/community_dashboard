@@ -1,5 +1,6 @@
 import type {
   GroupSlug,
+  IntegrationName,
   GroupWeekMetrics,
   IntegrationSnapshot,
   LeadsBySource,
@@ -9,7 +10,13 @@ import type {
   Registration,
   WeeklyEntry,
 } from './types';
-import { ALL_SOURCE_LABELS, attributeRegistration, bucketSource, getGroup } from './groups';
+import {
+  ALL_SOURCE_LABELS,
+  attributeRegistration,
+  bucketSource,
+  getGroup,
+  groupHasSource,
+} from './groups';
 import { isInWeek, lastNWeeks, previousWeek } from './weeks';
 
 /**
@@ -68,14 +75,19 @@ export function registrationsForGroup(
   return registrations.filter((r) => attributeRegistration(r) === group);
 }
 
-/** GA4 sessions for a group's campaigns within one week. */
+/**
+ * GA4 sessions for a group's campaigns within one week.
+ *
+ * Null — not zero — for a group whose community declares no GA4 coverage: the
+ * source doesn't measure that group, so there is no number to report.
+ */
 export function sessionsForGroupWeek(
   snapshot: IntegrationSnapshot,
   group: GroupSlug,
   weekStart: string,
-): number {
+): number | null {
   const config = getGroup(group);
-  if (!config) return 0;
+  if (!config || !groupHasSource(group, 'ga4')) return null;
   const campaigns = config.utmCampaigns.map((c) => c.toLowerCase());
   return snapshot.ga4
     .filter((row) => campaigns.includes(row.campaign.trim().toLowerCase()))
@@ -90,7 +102,7 @@ export function clicksBySourceForGroup(
 ): Map<string, number> {
   const config = getGroup(group);
   const map = new Map<string, number>();
-  if (!config) return map;
+  if (!config || !groupHasSource(group, 'shortio')) return map;
   for (const link of snapshot.shortLinks) {
     if (link.tag.trim().toLowerCase() !== config.shortioTag.toLowerCase()) continue;
     const bucket = link.source || bucketSource(link.title);
@@ -112,6 +124,9 @@ export function leadsBySourceForGroupWeek(
   group: GroupSlug,
   weekStart: string,
 ): LeadsBySource[] {
+  // No declared coverage on either side of the join → nothing to break down.
+  if (!groupHasSource(group, 'sheets') && !groupHasSource(group, 'shortio')) return [];
+
   const regs = registrationsForGroup(snapshot.registrations, group).filter((r) =>
     isInWeek(r.timestamp, weekStart),
   );
@@ -162,9 +177,14 @@ export function buildGroupWeekMetrics(
   const responses = entry ? pollResponses(entry.polls) : 0;
   const newMembers = newMembersFor(entry, prev);
 
-  const regs = registrationsForGroup(snapshot.registrations, group).filter((r) =>
-    isInWeek(r.timestamp, weekStart),
-  );
+  // Sheets-covered groups get a lead count (possibly 0); everyone else gets
+  // null, so "unmeasured" can never masquerade as "zero leads".
+  const sheetsCovered = groupHasSource(group, 'sheets');
+  const regs = sheetsCovered
+    ? registrationsForGroup(snapshot.registrations, group).filter((r) =>
+        isInWeek(r.timestamp, weekStart),
+      )
+    : [];
 
   return {
     group,
@@ -191,7 +211,7 @@ export function buildGroupWeekMetrics(
     activityLevel: entry?.activityLevel ?? null,
     notes: entry?.notes ?? '',
 
-    totalLeads: regs.length,
+    totalLeads: sheetsCovered ? regs.length : null,
     totalSessions: sessionsForGroupWeek(snapshot, group, weekStart),
     leadsBySource: leadsBySourceForGroupWeek(snapshot, group, weekStart),
   };
@@ -253,6 +273,11 @@ export interface MetricDef {
   unit: 'count' | 'percent';
   /** How to describe the number in a tooltip or axis. */
   description: string;
+  /**
+   * The automated source this metric needs. A community that doesn't declare
+   * it simply doesn't get the metric offered — no empty charts.
+   */
+  requires?: IntegrationName;
 }
 
 export const METRIC_DEFS: MetricDef[] = [
@@ -297,6 +322,7 @@ export const METRIC_DEFS: MetricDef[] = [
     shortLabel: 'Leads',
     unit: 'count',
     description: 'Registrations from the sheet, attributed to this group',
+    requires: 'sheets',
   },
   {
     key: 'totalSessions',
@@ -304,6 +330,7 @@ export const METRIC_DEFS: MetricDef[] = [
     shortLabel: 'Sessions',
     unit: 'count',
     description: "GA4 sessions on this group's UTM campaigns",
+    requires: 'ga4',
   },
 ];
 

@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { ComparisonTable, type ComparisonRow } from '@/components/ComparisonTable';
 import { MultiGroupTrend } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
-import { getCommunity, getGroup, singularize } from '@/lib/groups';
+import { getCommunity, getGroup, integrationsFor, singularize } from '@/lib/groups';
 import { groupsInCommunity, loadDashboard, multiGroupRows } from '@/lib/dashboard';
 import { pct } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
@@ -27,6 +27,7 @@ export default async function CommunityComparisonPage({
   const perGroup = groupsInCommunity(data, community.slug);
   const noun = community.groupNoun.toLowerCase();
   const singular = singularize(noun);
+  const hasSources = integrationsFor(community.slug).length > 0;
 
   const rows: ComparisonRow[] = perGroup.map((metrics) => {
     const group = getGroup(metrics.group);
@@ -44,7 +45,8 @@ export default async function CommunityComparisonPage({
       dmReplyRatePct: metrics.dmReplyRatePct,
       totalLeads: metrics.totalLeads,
       totalSessions: metrics.totalSessions,
-      leadConversionPct: pct(metrics.totalLeads, metrics.totalSessions),
+      leadConversionPct:
+        metrics.totalLeads === null ? null : pct(metrics.totalLeads, metrics.totalSessions),
       activityLevel: metrics.activityLevel,
       hasEntry: metrics.entry !== null,
       href: `/c/${community.slug}/group/${metrics.group}`,
@@ -70,12 +72,16 @@ export default async function CommunityComparisonPage({
         eyebrow={`${community.label} · Cross-${singular}`}
         title="Comparison"
         weekStart={data.displayWeek}
-        states={data.snapshot.states}
+        states={hasSources ? data.snapshot.states : []}
         fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice
+          snapshot={data.snapshot}
+          demoEntries={data.demoEntries}
+          sources={hasSources}
+        />
 
         <h2 className="sectionTitle">
           All metrics · week of {formatWeekRange(data.displayWeek)}

@@ -8,12 +8,18 @@ import type { IntegrationSnapshot } from '@/lib/types';
 export function DemoNotice({
   snapshot,
   demoEntries,
+  /**
+   * False on manual-only pages (Community #1): integration demo/error notices
+   * describe data those pages never show, so only the entries notice remains.
+   */
+  sources = true,
 }: {
   snapshot: IntegrationSnapshot;
   demoEntries: boolean;
+  sources?: boolean;
 }) {
-  const demo = snapshot.states.filter((s) => s.status === 'demo');
-  const errored = snapshot.states.filter((s) => s.status === 'error');
+  const demo = sources ? snapshot.states.filter((s) => s.status === 'demo') : [];
+  const errored = sources ? snapshot.states.filter((s) => s.status === 'error') : [];
 
   if (demo.length === 0 && errored.length === 0 && !demoEntries) return null;
 

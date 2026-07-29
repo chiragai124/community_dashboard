@@ -3,6 +3,7 @@ import type {
   CommunitySlug,
   GroupConfig,
   GroupSlug,
+  IntegrationName,
   Registration,
   ScopeSlug,
 } from './types';
@@ -16,10 +17,23 @@ import type {
  *
  * Group slugs are globally unique across communities, so a stored weekly entry
  * needs no community column: the group identifies it.
+ *
+ * DATA-SOURCE ATTRIBUTION lives here too, on each community's `integrations`
+ * list. Google Sheets, GA4 and Short.io all represent Community #2's traffic
+ * and signups only — none of them feed Community #1, whose numbers are manual
+ * weekly entries. When a future community starts getting fed by a source, add
+ * the source name to its `integrations` and set its join keys; the integration
+ * code reads only this file.
  */
 
 /* -------------------------------------------------- Community #1 — 5 groups */
 
+/**
+ * NOTE: these groups keep their sheetCountry / utmCampaigns / shortioTag keys,
+ * but the keys are INERT — Community #1 declares no `integrations`, so no
+ * pulled row is ever attributed here. They stay in place so that if this
+ * community ever gets its own sources, declaring them is the only change.
+ */
 const COMMUNITY_1_GROUPS: GroupConfig[] = [
   {
     slug: 'uk',
@@ -116,7 +130,14 @@ const COMMUNITY_1_GROUPS: GroupConfig[] = [
  * The Comparison page appears automatically once a community has 2+ groups.
  *
  * `sheetCountry` is empty on purpose: this community is global, so its
- * registrations are attributed by UTM campaign, never by country.
+ * registrations are attributed by UTM campaign, never by country. And because
+ * this is currently the only Sheets-fed group, any sheet row with no matching
+ * campaign still counts towards it (see attributeRegistration) — the whole
+ * sheet IS this community's signups.
+ *
+ * `shortioTag` is the tag on the Short.io links themselves. It applies to
+ * Short.io only — Sheets and GA4 rows are matched by campaign/country, never
+ * by this tag.
  */
 const COMMUNITY_2_GROUPS: GroupConfig[] = [
   {
@@ -127,7 +148,7 @@ const COMMUNITY_2_GROUPS: GroupConfig[] = [
     flag: '🌍',
     sheetCountry: [],
     utmCampaigns: ['community_aspirants_2026', 'wa_aspirants_2026'],
-    shortioTag: 'aspirants-2026',
+    shortioTag: 'scholarship_teamB',
     demo: {
       members: 610,
       growth: 0.068,
@@ -152,6 +173,9 @@ export const COMMUNITIES: CommunityConfig[] = [
     label: 'Community #1',
     description: 'UK, USA, Australia, Canada and Germany',
     groupNoun: 'Groups',
+    // Manual-only: Sheets, GA4 and Short.io do NOT represent these groups, so
+    // none of the pulled data is ever attributed to them.
+    integrations: [],
     groups: COMMUNITY_1_GROUPS,
   },
   {
@@ -161,6 +185,8 @@ export const COMMUNITIES: CommunityConfig[] = [
     label: 'Community #2',
     description: '2026 intake cohort, global',
     groupNoun: 'Segments',
+    // All three automated sources represent this community's traffic/signups.
+    integrations: ['sheets', 'ga4', 'shortio'],
     groups: COMMUNITY_2_GROUPS,
   },
 ];
@@ -216,6 +242,36 @@ export function groupSlugsOf(community: CommunitySlug): GroupSlug[] {
 /** The default community — what "/" lands on. */
 export const DEFAULT_COMMUNITY: CommunitySlug = COMMUNITIES[0].slug;
 
+/* ----------------------------------------------- data-source declarations -- */
+
+/** The sources declared by a community. Empty = manual-only. */
+export function integrationsFor(community: CommunitySlug): IntegrationName[] {
+  return getCommunity(community)?.integrations ?? [];
+}
+
+/** Does this community declare this source? */
+export function communityHasSource(
+  community: CommunitySlug,
+  source: IntegrationName,
+): boolean {
+  return integrationsFor(community).includes(source);
+}
+
+/** Does this group's community declare this source? */
+export function groupHasSource(group: GroupSlug, source: IntegrationName): boolean {
+  const config = getGroup(group);
+  return config ? communityHasSource(config.community, source) : false;
+}
+
+/**
+ * Every group whose community declares a source — the ONLY groups a pulled row
+ * may be attributed to. Integration code fans out from this, so attribution
+ * changes are config edits, never code edits.
+ */
+export function groupsWithSource(source: IntegrationName): GroupConfig[] {
+  return GROUPS.filter((g) => communityHasSource(g.community, source));
+}
+
 /**
  * Singular of a plural noun. Handles the "-ies" case, so "communities" becomes
  * "community" rather than "communitie".
@@ -266,37 +322,58 @@ export const ALL_SOURCE_LABELS = [
   OTHER_SOURCE_LABEL,
 ];
 
-/** Match a country string from the sheet back to a group. */
-export function groupForCountry(country: string): GroupSlug | null {
+/** Match a country string from the sheet back to a group among `candidates`. */
+export function groupForCountry(
+  country: string,
+  candidates: GroupConfig[] = GROUPS,
+): GroupSlug | null {
   const needle = country.trim().toLowerCase();
   if (!needle) return null;
-  for (const group of GROUPS) {
+  for (const group of candidates) {
     if (group.sheetCountry.some((c) => c.toLowerCase() === needle)) return group.slug;
   }
   return null;
 }
 
-/** Match a UTM campaign string back to a group. */
-export function groupForCampaign(campaign: string): GroupSlug | null {
+/** Match a UTM campaign string back to a group among `candidates`. */
+export function groupForCampaign(
+  campaign: string,
+  candidates: GroupConfig[] = GROUPS,
+): GroupSlug | null {
   const needle = campaign.trim().toLowerCase();
   if (!needle) return null;
-  for (const group of GROUPS) {
+  for (const group of candidates) {
     if (group.utmCampaigns.some((c) => c.toLowerCase() === needle)) return group.slug;
   }
   return null;
 }
 
 /**
- * The ONE group a registration counts towards.
+ * The ONE group a registration counts towards — or null when it counts nowhere.
  *
- * Campaign wins over country, and the result is exactly one group — which is
- * what keeps the merged roll-up honest. With two communities a member of the
- * 2026-intake cohort who lists "UK" as their destination would otherwise match
- * both that cohort (by campaign) and Community #1's UK group (by country), and
- * be counted twice in the combined totals.
+ * Two rules keep this honest:
+ *
+ * 1. Only groups whose community declares Sheets coverage are candidates. The
+ *    sheet represents Community #2 signups only, so a row whose destination
+ *    column says "UK" must NOT land in Community #1's UK group — that group's
+ *    numbers are manual, and the pulled row doesn't describe it.
+ * 2. Campaign wins over country, and the result is exactly one group, so a row
+ *    can never be counted twice in the merged roll-up.
+ *
+ * When exactly one Sheets-fed group exists (today: Community #2's single
+ * segment), rows with no matching campaign or country still count towards it —
+ * the whole sheet belongs to that community, UTM-tagged or not. The moment a
+ * second Sheets-fed group is configured this fallback stops, because an
+ * unmatched row could no longer be placed truthfully.
  */
 export function attributeRegistration(registration: Registration): GroupSlug | null {
-  return (
-    groupForCampaign(registration.utmCampaign) ?? groupForCountry(registration.country)
-  );
+  const candidates = groupsWithSource('sheets');
+  if (candidates.length === 0) return null;
+
+  const matched =
+    groupForCampaign(registration.utmCampaign, candidates) ??
+    groupForCountry(registration.country, candidates);
+  if (matched) return matched;
+
+  return candidates.length === 1 ? candidates[0].slug : null;
 }
