@@ -33,6 +33,23 @@ function parseActivity(value: unknown): ActivityLevel {
   return value === 'Low' || value === 'High' || value === 'Medium' ? value : 'Medium';
 }
 
+/**
+ * A list of short strings. Accepts an array or a single comma/newline-separated
+ * string, so the API is usable by hand as well as by the form. Items are trimmed,
+ * blanks dropped, and each is capped so a pasted essay can't land in a tag list.
+ */
+function parseStringList(value: unknown, maxItemLength = 160, maxItems = 40): string[] {
+  const items = Array.isArray(value)
+    ? value.map((v) => String(v ?? ''))
+    : typeof value === 'string'
+      ? value.split(/[,\n]/)
+      : [];
+  return items
+    .map((s) => s.trim().slice(0, maxItemLength))
+    .filter((s) => s !== '')
+    .slice(0, maxItems);
+}
+
 function parsePolls(value: unknown): Poll[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -103,6 +120,10 @@ export async function POST(request: Request) {
     dmsSent: Math.max(0, Math.round(Number(body.dmsSent) || 0)),
     dmReplies: Math.max(0, Math.round(Number(body.dmReplies) || 0)),
     activityLevel: parseActivity(body.activityLevel),
+    activityNote: String(body.activityNote ?? '').trim().slice(0, 500),
+    mainTopics: parseStringList(body.mainTopics, 60),
+    commonQuestions: parseStringList(body.commonQuestions, 200),
+    contentResponse: String(body.contentResponse ?? '').trim().slice(0, 1000),
     notes: String(body.notes ?? ''),
   };
 

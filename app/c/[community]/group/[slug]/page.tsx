@@ -6,6 +6,7 @@ import { PollHistoryTable } from '@/components/PollHistoryTable';
 import { WeeklyEntryForm } from '@/components/WeeklyEntryForm';
 import { SingleTrendChart, Sparkline } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
+import { WeekQualitative, hasQualitative } from '@/components/WeekQualitative';
 import { getCommunity, getGroup } from '@/lib/groups';
 import { entryWeekOptions, groupSeries, loadDashboard, weeklySessions } from '@/lib/dashboard';
 import { buildPollHistory, formatExact, formatPercent } from '@/lib/metrics';
@@ -47,7 +48,17 @@ export default async function GroupPage({
       <PageHeader
         eyebrow={`${community.label} · ${group.name === group.label ? community.groupNoun.replace(/s$/, '') : 'Group'}`}
         title={`${group.flag} ${group.label}`}
-        titleAccessory={<ActivityBadge level={metrics.activityLevel} />}
+        titleAccessory={
+          <>
+            <ActivityBadge level={metrics.activityLevel} />
+            {/* The "why" sits directly beside the badge, where the level is read. */}
+            {metrics.entry?.activityNote.trim() ? (
+              <span className="activityWhy" title={metrics.entry.activityNote}>
+                {metrics.entry.activityNote}
+              </span>
+            ) : null}
+          </>
+        }
         weekStart={data.displayWeek}
         states={data.snapshot.states}
         fetchedAt={data.snapshot.fetchedAt}
@@ -111,15 +122,32 @@ export default async function GroupPage({
           </StatCard>
         </div>
 
-        {metrics.notes.trim() !== '' ? (
+        {metrics.notes.trim() !== '' || hasQualitative(metrics.entry) ? (
           <section className="card" style={{ marginTop: 14 }}>
             <div className="card__head">
-              <div className="card__title">Notes · {formatWeekRange(data.displayWeek)}</div>
+              <div className="card__title">
+                This week’s notes · {formatWeekRange(data.displayWeek)}
+              </div>
             </div>
             <div className="card__body">
-              <p style={{ margin: 0, fontSize: 13.5, color: 'var(--ink-secondary)' }}>
-                {metrics.notes}
-              </p>
+              {metrics.notes.trim() !== '' ? (
+                <p
+                  style={{
+                    margin: hasQualitative(metrics.entry) ? '0 0 12px' : 0,
+                    fontSize: 13.5,
+                    color: 'var(--ink-secondary)',
+                  }}
+                >
+                  {metrics.notes}
+                </p>
+              ) : null}
+              {/* Same collapsed-by-default section as the card, so the two views
+                  never drift apart. */}
+              <WeekQualitative
+                entry={metrics.entry}
+                variant="panel"
+                label="Topics, questions & content response"
+              />
             </div>
           </section>
         ) : null}

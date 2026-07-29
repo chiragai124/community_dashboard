@@ -46,6 +46,14 @@ function toFormPolls(polls: Poll[]): FormPoll[] {
   }));
 }
 
+/** Split a comma- or newline-separated field into trimmed, non-empty items. */
+function splitList(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+}
+
 function num(value: string): number | null {
   if (value.trim() === '') return null;
   const parsed = Number(value);
@@ -88,6 +96,10 @@ export function WeeklyEntryForm({
   const [dmsSent, setDmsSent] = useState('');
   const [dmReplies, setDmReplies] = useState('');
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>('Medium');
+  const [activityNote, setActivityNote] = useState('');
+  const [mainTopics, setMainTopics] = useState('');
+  const [commonQuestions, setCommonQuestions] = useState('');
+  const [contentResponse, setContentResponse] = useState('');
   const [notes, setNotes] = useState('');
   const [polls, setPolls] = useState<FormPoll[]>([structuredClone(EMPTY_POLL)]);
 
@@ -112,6 +124,11 @@ export function WeeklyEntryForm({
       setDmsSent(String(existing.dmsSent));
       setDmReplies(String(existing.dmReplies));
       setActivityLevel(existing.activityLevel);
+      setActivityNote(existing.activityNote);
+      // Topics are entered comma-separated; questions one per line.
+      setMainTopics(existing.mainTopics.join(', '));
+      setCommonQuestions(existing.commonQuestions.join('\n'));
+      setContentResponse(existing.contentResponse);
       setNotes(existing.notes);
       setPolls(toFormPolls(existing.polls));
       return;
@@ -121,6 +138,12 @@ export function WeeklyEntryForm({
     setDmsSent('');
     setDmReplies('');
     setActivityLevel(previous?.activityLevel ?? 'Medium');
+    // The qualitative fields describe THIS week, so they never carry over from
+    // last week — a stale topic list would read as a fresh observation.
+    setActivityNote('');
+    setMainTopics('');
+    setCommonQuestions('');
+    setContentResponse('');
     setNotes('');
     setPolls([structuredClone(EMPTY_POLL)]);
   }, [existing, previous, weekStart]);
@@ -149,6 +172,11 @@ export function WeeklyEntryForm({
 
   const pollRate =
     totalMembersNum && totalMembersNum > 0 ? (pollResponseTotal / totalMembersNum) * 100 : null;
+
+  // Live previews for the qualitative fields, so the reader sees how their text
+  // will be split before they save it.
+  const topicPreview = splitList(mainTopics);
+  const questionCount = splitList(commonQuestions).length;
 
   const dmsSentNum = num(dmsSent);
   const dmRepliesNum = num(dmReplies);
@@ -212,6 +240,11 @@ export function WeeklyEntryForm({
           dmsSent: dmsSentNum ?? 0,
           dmReplies: dmRepliesNum ?? 0,
           activityLevel,
+          activityNote: activityNote.trim(),
+          // Sent as arrays; the API also accepts the raw strings and splits them.
+          mainTopics: splitList(mainTopics),
+          commonQuestions: splitList(commonQuestions),
+          contentResponse: contentResponse.trim(),
           notes: notes.trim(),
         }),
       });
@@ -373,7 +406,85 @@ export function WeeklyEntryForm({
             {previous && !existing ? `last week: ${previous.activityLevel}` : ' '}
           </span>
         </div>
+        {/* Directly after the dropdown, so the level and its reason are entered
+            together rather than in two different parts of the form. */}
+        <div className="field field--activityNote">
+          <label className="field__label" htmlFor="entry-activity-note">
+            Activity note
+            <span className="field__hint">why this level?</span>
+          </label>
+          <input
+            id="entry-activity-note"
+            type="text"
+            value={activityNote}
+            onChange={(e) => setActivityNote(e.target.value)}
+            placeholder="e.g. spike around the Tuesday poll, quiet after that"
+            maxLength={500}
+          />
+          <span className="field__computed">&nbsp;</span>
+        </div>
       </div>
+
+      <fieldset className="fieldset">
+        <legend className="fieldset__legend">What the week was about</legend>
+
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label className="field__label" htmlFor="entry-topics">
+            Main topics
+            <span className="field__hint">comma-separated</span>
+          </label>
+          <input
+            id="entry-topics"
+            type="text"
+            value={mainTopics}
+            onChange={(e) => setMainTopics(e.target.value)}
+            placeholder="Scholarships, Visa process, IELTS"
+          />
+          {/* Live chip preview, so the split is visible before saving. */}
+          {topicPreview.length > 0 ? (
+            <div className="tagRow" style={{ marginTop: 6 }}>
+              {topicPreview.map((topic) => (
+                <span className="tag" key={topic}>
+                  {topic}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label className="field__label" htmlFor="entry-questions">
+            Common student questions
+            <span className="field__hint">
+              one per line
+              {questionCount > 0
+                ? ` · ${questionCount} question${questionCount === 1 ? '' : 's'}`
+                : ''}
+            </span>
+          </label>
+          <textarea
+            id="entry-questions"
+            className="textarea--list"
+            value={commonQuestions}
+            onChange={(e) => setCommonQuestions(e.target.value)}
+            placeholder={'Do I need a UK guarantor to book?\nCan I pay rent in instalments?'}
+          />
+        </div>
+
+        <div className="field">
+          <label className="field__label" htmlFor="entry-content-response">
+            Content response
+            <span className="field__hint">how students reacted to what you posted</span>
+          </label>
+          <textarea
+            id="entry-content-response"
+            value={contentResponse}
+            onChange={(e) => setContentResponse(e.target.value)}
+            placeholder="Poll got the most replies; the property carousel was mostly skimmed."
+            maxLength={1000}
+          />
+        </div>
+      </fieldset>
 
       <div>
         <div className="rowBetween" style={{ marginBottom: 9 }}>

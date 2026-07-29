@@ -3,10 +3,16 @@ import type { GroupWeekMetrics } from '@/lib/types';
 import { communityOf, getGroup, singularize } from '@/lib/groups';
 import { formatExact, formatSigned, formatSignedPercent } from '@/lib/metrics';
 import { ActivityBadge } from './StatCard';
+import { WeekQualitative } from './WeekQualitative';
 
 /**
  * One group on the overview grid: member count, new members, activity level and
  * leads this week — the at-a-glance comparison set.
+ *
+ * The card is a link, but the week-notes expander is a sibling of that link
+ * rather than a child: a <summary> inside an <a> is invalid HTML and clicking it
+ * would navigate instead of expanding. So the anchor covers the figures and the
+ * expander sits below it, inside the same card frame.
  */
 export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
   const group = getGroup(metrics.group);
@@ -16,9 +22,11 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
   const noun = singularize(communityOf(metrics.group)?.groupNoun ?? 'Groups').toLowerCase();
   const growth = metrics.memberGrowthPct;
   const direction = growth === null ? 'flat' : growth > 0 ? 'up' : growth < 0 ? 'down' : 'flat';
+  const href = `/c/${group.community}/group/${group.slug}`;
 
   return (
-    <Link href={`/c/${group.community}/group/${group.slug}`} className="groupCard">
+    <article className="groupCard">
+      <Link href={href} className="groupCard__link">
       <div className="groupCard__head">
         <span className="groupCard__flag" aria-hidden="true">
           {group.flag}
@@ -75,11 +83,17 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
         </div>
       </div>
 
-      <div className="groupCard__foot">
+      </Link>
+
+      {/* Between the figures and the CTA, so the call to action stays the last
+          row of the card. */}
+      <WeekQualitative entry={metrics.entry} variant="card" />
+
+      <Link href={href} className="groupCard__foot" tabIndex={-1} aria-hidden="true">
         {/* "View segment" in a community whose subdivisions are segments. */}
         {hasEntry ? `View ${noun}` : 'Add this week’s numbers'}
         <span aria-hidden="true">→</span>
-      </div>
-    </Link>
+      </Link>
+    </article>
   );
 }

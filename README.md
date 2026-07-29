@@ -135,8 +135,26 @@ mid-week date can never create a second row for the same week.
 
 ## What is typed vs. calculated
 
-Typed weekly, per group (about a minute each): member count, polls (question →
-option → count), 1:1 DMs sent, DM replies, activity level, notes.
+Typed weekly, per group (about a minute each):
+
+| Field | Shape |
+|---|---|
+| Member count | number — pre-filled from last week |
+| Polls | question → option → count, any number of polls |
+| 1:1 DMs sent / DM replies | numbers |
+| Activity level | Low / Medium / High |
+| **Activity note** | free text, sits beside the level — *why* it's that level |
+| **Main topics** | comma-separated tags, e.g. `Scholarships, Visa process, IELTS` |
+| **Common student questions** | one per line |
+| **Content response** | free text — how students reacted to what you posted |
+| Notes / observations | free text |
+
+The four qualitative fields are shown as a **collapsed-by-default expandable
+section** on each group's card and detail page, so the card view stays compact.
+The section renders nothing at all when a week has none of them filled in, and the
+activity note also appears next to the level badge in the group header. Unlike the
+member count, none of these carry over from last week — a stale topic list would
+read as a fresh observation.
 
 Everything below is computed in [`lib/metrics.ts`](lib/metrics.ts) and is never
 hand-entered:

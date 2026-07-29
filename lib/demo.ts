@@ -53,6 +53,16 @@ function pick<T>(rand: () => number, items: T[]): T {
   return items[Math.floor(rand() * items.length)];
 }
 
+/** `count` distinct items, so a topic list never repeats a tag. */
+function pickSome<T>(rand: () => number, items: T[], count: number): T[] {
+  const pool = [...items];
+  const out: T[] = [];
+  for (let i = 0; i < count && pool.length > 0; i += 1) {
+    out.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+  }
+  return out;
+}
+
 const POLL_TEMPLATES: { question: string; options: string[] }[] = [
   {
     question: 'What stage of your housing search are you at?',
@@ -74,6 +84,51 @@ const POLL_TEMPLATES: { question: string; options: string[] }[] = [
     question: 'How did you hear about this community?',
     options: ['Instagram', 'A friend', 'Scholarship team', 'amber website'],
   },
+];
+
+/** Topic tags, questions and content reactions for the qualitative fields. */
+const TOPIC_POOL = [
+  'Scholarships',
+  'Visa process',
+  'IELTS',
+  'Accommodation costs',
+  'Guarantor requirements',
+  'Flatmate matching',
+  'Bank account setup',
+  'Part-time work rules',
+  'Move-in dates',
+  'City safety',
+];
+
+const QUESTION_POOL = [
+  'Do I need a UK guarantor to book?',
+  'How early should I book for September?',
+  'Can I pay rent in instalments?',
+  'Is the deposit refundable if my visa is refused?',
+  'What counts as proof of funds?',
+  'How far is this from campus by bus?',
+  'Can I share a twin studio with a friend?',
+  'Are bills included in the rent?',
+  'What happens if my course start date moves?',
+  'Do you have anything under £200 a week?',
+];
+
+const CONTENT_RESPONSE_TEMPLATES = [
+  'Poll got the most replies of any post; the property carousel was mostly skimmed.',
+  'Announcement about the scholarship deadline drove the week’s DM spike.',
+  'Video tour got saved a lot but few replies — reactions over comments.',
+  'Text-only checklist outperformed the graphic version; several asked for a PDF.',
+  'Quiet on announcements, but the cost-breakdown post got quoted repeatedly.',
+  'Reels landed better than static images; two students shared with friends.',
+];
+
+const ACTIVITY_NOTE_TEMPLATES = [
+  'Steady chat all week, spike around the Tuesday poll.',
+  'Exam season — replies dropped off after Wednesday.',
+  'Busiest week yet, mostly move-in logistics.',
+  'Slow start, picked up sharply after the deadline reminder.',
+  'A handful of very active members carried most of the thread.',
+  'Quiet but high-intent: fewer messages, more booking questions.',
 ];
 
 const NOTE_TEMPLATES = [
@@ -155,6 +210,10 @@ export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[]
       const activityLevel =
         activityScore > 1.25 ? 'High' : activityScore > 0.85 ? 'Medium' : 'Low';
 
+      // 2–3 topics and 2–3 questions per week, drawn without repeats.
+      const mainTopics = pickSome(rand, TOPIC_POOL, randInt(rand, 2, 3));
+      const commonQuestions = pickSome(rand, QUESTION_POOL, randInt(rand, 2, 3));
+
       const now = parseISODate(weekStart).toISOString();
       entries.push({
         id: `${group.slug}:${weekStart}`,
@@ -166,6 +225,10 @@ export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[]
         dmsSent,
         dmReplies,
         activityLevel,
+        activityNote: pick(rand, ACTIVITY_NOTE_TEMPLATES),
+        mainTopics,
+        commonQuestions,
+        contentResponse: rand() > 0.25 ? pick(rand, CONTENT_RESPONSE_TEMPLATES) : '',
         notes: rand() > 0.45 ? pick(rand, NOTE_TEMPLATES) : '',
         createdAt: now,
         updatedAt: now,
