@@ -1573,3 +1573,145 @@ textarea {
     padding-right: 16px;
   }
 }
+
+/* ------------------------------------------------------------------ imports */
+/* The weekly upload panel. Collapsed by default and styled as a quiet utility:
+   it is a chore that feeds the numbers above it, not a headline surface. */
+
+.imp {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.imp__summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 15px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-secondary);
+  list-style: none;
+  min-width: 0;
+}
+
+.imp__summary::-webkit-details-marker {
+  display: none;
+}
+
+.imp__summary::marker {
+  content: '';
+}
+
+.imp__summary:hover {
+  color: var(--ink);
+}
+
+.imp[open] > .imp__summary > .qual__chevron {
+  transform: rotate(90deg);
+}
+
+.imp__body {
+  padding: 2px 15px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.impRow {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.impRow:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.impRow__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.impRow__sub {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+
+.impRow__controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 13px;
+  align-items: end;
+}
+
+@media (max-width: 640px) {
+  .impRow__controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.impRow__status {
+  margin: 0;
+  font-size: 11.5px;
+}
+
+/* The stored-file summary: filename, when it landed, and where each number in
+   it came from. */
+.impRow__stored {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 9px 11px;
+  font-size: 12px;
+}
+
+.impRow__notes,
+.impRow__steps {
+  margin: 7px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+}
+
+.impRow__steps {
+  margin: 0 0 12px;
+  padding-left: 32px;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.imp--steps {
+  border: 0;
+  background: transparent;
+}
+
+.imp--steps > .imp__summary {
+  padding: 4px 0;
+}
+
+.imp--steps[open] > .imp__summary > .qual__chevron {
+  transform: rotate(90deg);
+}
+
+input[type='file'] {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+input[type='file']:hover:not(:disabled) {
+  border-color: var(--accent);
+}

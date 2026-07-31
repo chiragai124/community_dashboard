@@ -9,8 +9,8 @@ dist/
 .env.local
 .env*.local
 
-# Runtime data: the JSON store accumulates real weekly entries and the
-# integration cache holds pulled API data. Both are machine-local state.
+# Runtime data: real weekly entries (weekly-entries.json) and the figures
+# extracted from uploaded exports (imports.json). Both are machine-local state.
 data/*.json
 !data/demo-seed.json
 

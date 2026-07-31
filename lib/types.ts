@@ -16,8 +16,11 @@ export type GroupSlug =
 /** Top-level communities. Each is its own report. */
 export type CommunitySlug = 'community-1' | 'community-2';
 
-/** The three automated data sources. */
-export type IntegrationName = 'sheets' | 'ga4' | 'shortio';
+/**
+ * The two file-import sources. Each corresponds to one export the user
+ * downloads weekly and uploads here. There are no API connections.
+ */
+export type ImportSource = 'shortio' | 'ga4';
 
 /** The three things the top-level switcher can select. */
 export type ScopeSlug = CommunitySlug | 'merged';
@@ -30,10 +33,6 @@ export interface DemoProfile {
   members: number;
   /** Baseline weekly growth rate, e.g. 0.04 for 4%. */
   growth: number;
-  /** Baseline weekly lead count. */
-  leads: number;
-  /** Universities to sprinkle through demo registrations. */
-  universities: string[];
 }
 
 export interface GroupConfig {
@@ -45,13 +44,6 @@ export interface GroupConfig {
   /** Short label used in the sidebar, cards and table rows. */
   label: string;
   flag: string;
-  /** Country value as written in the registration sheet. Empty for groups that
-   *  are not country-scoped — those are attributed by UTM campaign only. */
-  sheetCountry: string[];
-  /** UTM campaign(s) that belong to this group — used to filter GA4 + leads. */
-  utmCampaigns: string[];
-  /** Short.io tag identifying this group's tracked links. */
-  shortioTag: string;
   demo: DemoProfile;
 }
 
@@ -70,15 +62,10 @@ export interface CommunityConfig {
   /** What this community calls its subdivisions — "Groups" or "Segments". */
   groupNoun: string;
   /**
-   * Which automated sources actually represent this community's traffic and
-   * signups. Empty means manual-only: none of the pulled data is attributed to
-   * this community, and its pages show no integration figures at all.
-   *
-   * This is THE attribution switch. When a new community starts getting fed by
-   * a source, add the source name here — nothing in the integration code needs
-   * rewiring.
+   * Which exports can be imported for this community. Imported figures are
+   * community-level, not per group: one Short.io and one GA4 file per week.
    */
-  integrations: IntegrationName[];
+  imports: ImportSource[];
   groups: GroupConfig[];
 }
 
@@ -96,8 +83,7 @@ export interface PollOption {
 
 /**
  * A single manual weekly entry. This is the only hand-typed data in the
- * dashboard; everything in `metrics.ts` is derived from it plus the
- * integration pulls.
+ * dashboard; everything in `metrics.ts` is derived from it plus the imports.
  */
 export interface WeeklyEntry {
   id: string;
@@ -144,90 +130,75 @@ export interface WeeklyEntryInput {
   notes?: string;
 }
 
-/* ------------------------------------------------------------- integrations */
+/* --------------------------------------------------------- imported figures */
 
-/** A registration row pulled from the Google Sheet. */
-export interface Registration {
-  name: string;
-  email: string;
-  country: string;
-  university: string;
-  utmSource: string;
-  utmMedium: string;
-  utmCampaign: string;
-  /** ISO timestamp. */
-  timestamp: string;
-}
-
-/** One GA4 day of sessions for a campaign. */
-export interface Ga4SessionRow {
-  /** YYYY-MM-DD */
-  date: string;
-  campaign: string;
-  source: string;
-  medium: string;
-  sessions: number;
-}
-
-/** Click counts for one tracked Short.io link. */
-export interface ShortLinkClicks {
-  /** Short.io link id or path. */
-  id: string;
-  title: string;
-  tag: string;
+/** Clicks on one tracked link, from Short.io's "Top links" sheet. */
+export interface LinkClicks {
+  /** The link path as Short.io reports it, e.g. "/scholarship-teamB". */
+  path: string;
   clicks: number;
-  /** Attribution bucket this link belongs to, e.g. "Instagram". */
-  source: string;
 }
 
-export type IntegrationStatus = 'live' | 'demo' | 'error';
-
-export interface IntegrationState {
-  name: IntegrationName;
-  label: string;
-  status: IntegrationStatus;
-  message: string;
-  /** ISO timestamp of the pull that produced the current cache. */
-  fetchedAt: string;
+/** What one Short.io workbook contributes. */
+export interface ShortioFigures {
+  totalClicks: number;
+  links: LinkClicks[];
 }
 
-export interface IntegrationSnapshot {
-  registrations: Registration[];
-  ga4: Ga4SessionRow[];
-  shortLinks: ShortLinkClicks[];
-  states: IntegrationState[];
-  fetchedAt: string;
+/** What one GA4 reports-snapshot CSV contributes. */
+export interface Ga4Figures {
+  activeUsers: number | null;
+  newUsers: number | null;
+  sessions: number | null;
+}
+
+/**
+ * One uploaded file.
+ *
+ * `source` + `community` + `weekStart` is the natural key, so re-uploading the
+ * same export for the same week replaces that week's numbers rather than adding
+ * to them — upload the same file twice and nothing doubles.
+ */
+export interface ImportedFile {
+  id: string;
+  source: ImportSource;
+  community: CommunitySlug;
+  /** ISO week start (Monday) the figures are filed under. */
+  weekStart: string;
+  filename: string;
+  uploadedAt: string;
+  /**
+   * Where each figure was found, in plain words — which sheet or which report
+   * section. Shown next to the numbers so any surprising value can be traced
+   * back to the file without opening it.
+   */
+  notes: string[];
+  shortio?: ShortioFigures;
+  ga4?: Ga4Figures;
+}
+
+/** The figures for one community and week, from however many files. */
+export interface ImportedWeek {
+  weekStart: string;
+  shortio: ShortioFigures | null;
+  ga4: Ga4Figures | null;
 }
 
 /* ----------------------------------------------------------- derived shapes */
-
-export interface LeadsBySource {
-  source: string;
-  leads: number;
-  clicks: number;
-  /** leads / clicks, as a percentage. null when clicks are unknown. */
-  conversionRate: number | null;
-}
 
 /** Pooled figures for a community, or for every community at once. */
 export interface RollupTotals {
   members: number;
   newMembers: number;
-  /** Null when no group in scope has Sheets coverage. */
-  leads: number | null;
-  /** Null when no group in scope has GA4 coverage. */
-  sessions: number | null;
   /** Responses ÷ members, pooled across the groups in scope. */
   pollResponseRatePct: number | null;
   /** Replies ÷ DMs sent, pooled. */
   dmReplyRatePct: number | null;
-  /** Leads ÷ sessions, pooled. */
-  leadConversionPct: number | null;
   groupsWithEntry: number;
   groupCount: number;
 }
 
-/** Everything one group needs for one week, manual + auto + derived. */
+/** Everything one group needs for one week. All of it manual. */
 export interface GroupWeekMetrics {
   group: GroupSlug;
   community: CommunitySlug;
@@ -253,16 +224,6 @@ export interface GroupWeekMetrics {
 
   activityLevel: ActivityLevel | null;
   notes: string;
-
-  /**
-   * Registrations attributed to this group in this week. Null — not zero —
-   * when the group's community declares no Sheets coverage: "we don't measure
-   * this here" must stay distinguishable from "we measured zero".
-   */
-  totalLeads: number | null;
-  /** GA4 sessions this week; null when the community declares no GA4 coverage. */
-  totalSessions: number | null;
-  leadsBySource: LeadsBySource[];
 }
 
 export interface PollHistoryRow {
@@ -286,6 +247,4 @@ export type MetricKey =
   | 'newMembers'
   | 'memberGrowthPct'
   | 'pollResponseRatePct'
-  | 'dmReplyRatePct'
-  | 'totalLeads'
-  | 'totalSessions';
+  | 'dmReplyRatePct';

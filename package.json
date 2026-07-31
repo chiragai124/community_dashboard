@@ -2,12 +2,13 @@
   "name": "amber-community-dashboard",
   "version": "1.0.0",
   "private": true,
-  "description": "Engagement and lead performance dashboard for amber's 5 WhatsApp communities (UK, USA, Australia, Canada, Germany)",
+  "description": "Engagement dashboard for amber's WhatsApp communities: manual weekly entries plus weekly Short.io and GA4 file imports",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:stubs": "node scripts/check-no-debug-stubs.mjs"
   },
   "repository": {
     "type": "git",
@@ -15,7 +16,6 @@
   },
   "license": "UNLICENSED",
   "dependencies": {
-    "googleapis": "^173.0.0",
     "next": "^16.2.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

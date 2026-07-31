@@ -586,9 +586,18 @@ export function Sparkline({ points, height = 34 }: { points: TrendPoint[]; heigh
   if (values.length < 2) return null;
   const target = lastIndexWithValue(points);
 
+  // An unchanged series (three identical weeks, or a run of zeros) has min ===
+  // max, and Recharts' automatic domain collapses to a single value — the line is
+  // drawn on the axis edge and reads as an empty box. Pad the domain so a flat
+  // series draws a flat line through the middle, which is the truth of it.
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = max === min ? Math.max(Math.abs(max) * 0.1, 1) : (max - min) * 0.12;
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={points} margin={{ top: 4, right: 5, bottom: 2, left: 0 }}>
+        <YAxis hide domain={[min - pad, max + pad]} />
         <Line
           dataKey="value"
           stroke={CHART.CONTEXT}

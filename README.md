@@ -9,9 +9,10 @@ scopes selectable from the sidebar:
 | **Community #2** | `amber global aspirants #2 \| 2026 Intake` — its own report, not a group inside #1 |
 | **Merged** | Both communities pooled together |
 
-Manual weekly input plus three automated pulls. **No WhatsApp API or bot is used
-anywhere**, so there is no ban risk: every number comes either from an official
-data source (Google Sheets, GA4, Short.io) or from the weekly form.
+Manual weekly input plus two weekly file imports. **No WhatsApp API or bot is
+used anywhere**, so there is no ban risk — and there are no API connections at
+all: every number comes either from the weekly form or from a file you export
+yourself and upload.
 
 ---
 
@@ -22,10 +23,14 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-It works immediately with no configuration. With no credentials and no saved
-entries, the dashboard runs on eight weeks of deterministic demo data and labels
-it as demo on every affected surface — so you can see the real layout before
-wiring anything up.
+It works immediately with no configuration — there is nothing to configure. With
+no saved entries the dashboard shows eight weeks of deterministic demo weekly
+entries and labels them as demo, so you can see the real layout before typing
+anything up.
+
+Imported figures have **no demo mode**: those cards read `—` until you upload a
+file. An invented traffic number costs more trust when discovered than an empty
+card costs patience.
 
 **Demo data is never written to disk.** Your first saved entry replaces the demo
 history entirely, rather than being appended to it: once real entries exist the
@@ -38,81 +43,111 @@ npm run build && npm start   # production
 npm run typecheck            # tsc --noEmit
 ```
 
-## Connect the real data
+## The weekly routine
 
-Copy `.env.example` to `.env.local` and fill in what you have. Each integration
-degrades on its own, so you can connect them one at a time.
+Two files a week, per community, uploaded from the community's own page under
+**Import data**. Nothing is fetched — no credentials, no API keys, no
+`.env.local`.
 
-| Source | What it provides | Needs |
+| Source | File | What it fills in |
 |---|---|---|
-| **Google Sheets** | Registrations: name, email, country, university, UTM source/medium/campaign, timestamp | `GOOGLE_SHEETS_ID` + service-account credentials |
-| **GA4 Data API** | Weekly sessions by campaign / source / medium | `GA4_PROPERTY_ID` + the same service account |
-| **Short.io** | Click counts per tracked link (tag: `scholarship_teamB`) | `SHORTIO_API_KEY`, `SHORTIO_DOMAIN_ID` |
+| **Short.io** | Statistics workbook, `.xlsx` | Total link clicks, and clicks per link path |
+| **GA4** | Reports snapshot, `.csv` | Active users, new users, sessions |
 
-**All three sources represent Community #2 only.** None of them feed Community
-#1's groups, whose numbers are manual weekly entries — so Community #1 pages
-show no leads, sessions, source pills or refresh button at all, rather than
-misleading zeros. Which community a source covers is declared per community in
-`lib/groups.ts` (`integrations`); the Merged view rolls every declared source
-into one combined traffic/funnel layer (Short.io clicks → GA4 sessions →
-registrations). The `scholarship_teamB` tag applies to Short.io links only —
-Sheets and GA4 rows are matched by campaign/country.
+`source` + `community` + `week` is the natural key, so **re-uploading the same
+export for the same week replaces it** rather than adding to it. Uploading the
+same file twice never doubles a figure.
 
-One Google service account covers both Google sources: share the sheet with its
-email, and add that email as a Viewer on the GA4 property.
+The upload itself is not kept: the file is parsed in-process, the handful of
+extracted numbers are written to `data/imports.json`, and the file is discarded.
+Nothing you upload lingers on the server.
 
-Data refreshes on page load once the cache is stale (10 minutes by default) and
-on the **Refresh data** button in the page header. There is no realtime sync and
-no background polling — by design.
+### Exporting from Short.io
 
-### Structure and attribution — all in one file
+1. Sign in at short.io and open **Statistics** in the left sidebar.
+2. Set the date range to the Monday–Sunday week you are reporting on.
+3. Leave the domain filter on the domain holding your tracked links.
+4. Click **Export** (top right) and choose **Excel / .xlsx**.
+5. Upload the workbook unopened and unedited — the sheet names are what the
+   reader matches on.
 
-Communities, their groups, and every join key against the three data sources live
-in [`lib/groups.ts`](lib/groups.ts). Nothing else reads them.
+Only two of the workbook's sheets are read: **General statistic** for the total
+click count, and **Top links** for clicks per link path. OS, Browser, Country,
+City, Social, Referrer, the UTM breakdowns and Click statistics are all ignored.
+If the total is missing or worded differently, the per-link clicks are summed
+instead and the panel says so.
+
+### Exporting from GA4
+
+1. Open analytics.google.com and pick the property.
+2. Go to **Reports → Reports snapshot**.
+3. Set the date range (top right) to the same Monday–Sunday week.
+4. Click the **share** icon → **Download file** → **Download CSV**.
+5. Upload that CSV as-is.
+
+A Reports snapshot is not one table — it is several small reports stacked
+together (Active users, Page titles, Traffic sources, City breakdown, daily
+new/returning users), each preceded by `#` comment lines. The reader splits the
+file on those comment blocks and takes **Active users**, **New users**, and
+**Sessions** from the traffic-source section. Sessions specifically prefers a
+section carrying a source/medium or channel dimension over any other section that
+merely has a Sessions column.
+
+Every figure records **which section it came from**, shown next to the stored
+file in the import panel, so a surprising number can be traced without reopening
+the export. GA4 also stamps its date range into the file: if that range doesn't
+match the week you filed it under, the panel says so — the upload still goes
+through, because filing a late export deliberately is legitimate.
+
+### WhatsApp chat exports
+
+The per-country `.zip` chat exports are **not** parsed. Read them yourself and
+put what matters into the existing qualitative fields on the weekly form — main
+topics, common student questions, content response, and the activity note. Those
+fields already exist and are shown as an expandable section on each group card and
+detail page.
+
+### Structure — all in one file
+
+Communities and their groups live in [`lib/groups.ts`](lib/groups.ts). Nothing
+else defines them.
 
 ```ts
-// Per community: which sources represent it. THE attribution switch.
-{ slug: 'community-1', integrations: [], … }                        // manual-only
-{ slug: 'community-2', integrations: ['sheets', 'ga4', 'shortio'], … }
+// Per community: which exports it can import.
+{ slug: 'community-1', imports: ['shortio', 'ga4'], … }
+{ slug: 'community-2', imports: ['shortio', 'ga4'], … }
 
-// Per group: the join keys the declared sources use.
+// Per group: identity and a demo profile. No import configuration —
+// imported figures are community-level, not per group.
 {
   slug: 'aspirants-2026',
   community: 'community-2',
-  utmCampaigns: ['community_aspirants_2026', …],  // matches GA4 + sheet campaigns
-  shortioTag: 'scholarship_teamB',                // tag on the Short.io links only
-  demo: { members: 610, growth: 0.068, leads: 27, universities: […] },
+  label: 'Community-wide',
+  demo: { members: 610, growth: 0.068 },
 }
 ```
 
-A pulled row can only ever be attributed to a group whose community declares
-that source. When a future community starts getting fed — as older communities
-fill up — add the source names to its `integrations` and set its join keys;
-every page, roll-up, demo generator and the merged funnel picks it up from
-config, with no integration code changes.
+Declaring a source only *offers* the import control. Whether a figure appears for
+a given week depends on whether a file has actually been uploaded for it — which
+is why an unimported week reads `—` rather than `0`. That distinction is enforced
+all the way down: `null` means "no file for this week", `0` means "the file said
+zero", and they never render the same.
 
 Group slugs are globally unique across communities, so a stored weekly entry
 needs no community column — the group identifies it.
 
-Sheet **columns are matched by header name, not position**, and matching ignores
-case, spaces and punctuation — so `Targeted country`, `Target Country` and
-`targeted_country` all resolve to the same field. Accepted aliases live in
-[`lib/integrations/sheet-columns.ts`](lib/integrations/sheet-columns.ts) (also
-listed in `.env.example`); **add an alias there rather than renaming a sheet to
-suit the code.** Only `timestamp` is a hard requirement, since it places a row in
-a week — country, UTM and university columns are all optional, and columns the
-dashboard has no field for are ignored. When a required column is missing, the
-Sheets status pill names the field *and* the header names that would satisfy it.
+Column and sheet matching ignores case, spaces and punctuation, and each figure
+has several accepted labels — so Short.io renaming "Total clicks" to "Clicks", or
+GA4 labelling its dimension "Session source / medium" instead of "Session
+source", does not break a weekly upload. The accepted names live in
+[`lib/imports/shortio.ts`](lib/imports/shortio.ts) and
+[`lib/imports/ga4.ts`](lib/imports/ga4.ts). **Add a label there rather than
+editing an export to suit the code.**
 
-**Attribution is exclusive and coverage-scoped.** Each registration counts
-towards exactly one group: UTM campaign first, then country, considering only
-groups whose community declares Sheets coverage. This matters twice over — a
-2026-intake member who lists "UK" as their destination must neither be counted
-twice in the merged totals nor land in Community #1's UK group, whose numbers
-the sheet doesn't represent. While Community #2 has a single Sheets-fed segment,
-sheet rows with no matching campaign still count towards it (the whole sheet is
-that community's signups); that fallback stops automatically the moment a second
-Sheets-fed group exists.
+The `.xlsx` reader is hand-written ([`lib/xlsx.ts`](lib/xlsx.ts)): an xlsx is a
+ZIP of XML parts, and Node's zlib supplies the only hard part, so two numbers
+don't need a spreadsheet dependency. It reads cells as strings and nothing else —
+no formulas, styles or merged-cell geometry.
 
 ### Adding segments to Community #2
 
@@ -120,35 +155,32 @@ Community #2 currently has a single community-wide segment, because its real
 subdivisions (if any) aren't known yet. To add them:
 
 1. Add each new slug to `GroupSlug` in [`lib/types.ts`](lib/types.ts).
-2. Copy the segment object in `COMMUNITY_2_GROUPS` and set `slug`, `label`,
-   `utmCampaigns` and `shortioTag`.
+2. Copy the segment object in `COMMUNITY_2_GROUPS` and set `slug` and `label`.
 
 That's it. Overview cards, the comparison table, trends, the entry form and the
 merged roll-up all pick them up with no further changes, and the Comparison page
-appears automatically once a community has two or more groups. `sheetCountry` is
-empty for this community on purpose — it's global, so its registrations are
-attributed by campaign, never by country.
+appears automatically once a community has two or more groups.
 
 ### What Community #2 needs from you
 
-Nothing is required to run it — it ships with demo data like everything else. To
-make it real, provide any of these:
+Nothing is required to run it. To make it real, provide any of these:
 
 | What | Where it goes | Notes |
 |---|---|---|
 | **Its segments**, if it has any | `COMMUNITY_2_GROUPS` | Names only; I'll wire them up |
-| **UTM campaign name(s)** | `utmCampaigns` | The exact string in GA4 / the sheet's campaign column |
-| **Short.io tag** | `shortioTag` | Configured as `scholarship_teamB` — correct it here if that changes |
 | **Current member count** | the weekly form | Or a starting number and I'll seed it |
-| **Weekly history**, if you have it | the weekly form, one week at a time | Member count, polls, DMs sent/replies, activity, notes — same format as Community #1 |
+| **Weekly history**, if you have it | the weekly form, one week at a time | Member count, polls, DMs sent/replies, activity, notes |
+| **This week's exports** | Import data, on the Community #2 page | Short.io `.xlsx` and GA4 `.csv` |
 
 The weekly entry format is identical for both communities, so there's nothing new
 to learn: member count, poll question + option counts, DMs sent, DM replies,
 activity level, notes.
 
-Lead-source buckets — Instagram, refer-a-friend, scholarship teams, community
-banners — are also defined in `lib/groups.ts` (`LEAD_SOURCE_BUCKETS`). Anything
-unmatched falls into "Other".
+## Where imported figures are stored
+
+`data/imports.json` (gitignored), one small record per uploaded file: the source,
+community, week, filename, the extracted numbers, and a note per figure saying
+where in the file it was found. Small enough to read and correct by hand.
 
 ## Where weekly entries are stored
 
@@ -194,9 +226,12 @@ hand-entered:
 - New members (delta against last week's count, overridable)
 - Poll response rate % — responses ÷ member count
 - DM reply rate % — replies ÷ DMs sent
-- Registrations-to-clicks conversion per source
-- Total leads this week (Sheet, filtered by group)
-- Total site traffic this week (GA4, filtered by the group's UTM campaign)
+
+Imported figures are read straight out of the uploaded files and are not derived
+from anything: total link clicks and clicks per link path (Short.io), active
+users, new users and sessions (GA4). They are shown per community and, on the
+merged view, summed across the communities that have an upload for that week — a
+community with no file contributes nothing rather than a zero.
 
 The form pre-fills last week's member count so you only edit the delta, defaults
 activity to last week's choice, and shows every derived rate live as you type.
@@ -218,12 +253,14 @@ the URL, so any view can be linked to directly.
 
 **Per community** — `/c/community-1`, `/c/community-2`:
 
-- **Overview** — the community's groups side by side (members, new members,
-  activity level, leads), its pooled totals, this week's notes, and which of its
-  groups still need an entry.
-- **Group detail** (one per group) — weekly stat cards with sparklines, leads by
-  source, GA4 traffic trend, member and poll-rate trends, full poll history, and
-  the weekly entry form.
+- **Overview** — pooled member/poll/DM totals, then this week's **imported
+  figures** (active users, new users, sessions, link clicks) with clicks by link,
+  the **Import data** panel, the community's groups side by side, this week's
+  notes, and which groups still need an entry.
+- **Group detail** (one per group) — weekly stat cards with sparklines, member and
+  poll-rate trends, full poll history, and the weekly entry form. No imported
+  figures here: they are community-level, so putting them on a group page would
+  imply a per-group split that the exports don't contain.
 - **Comparison** — the community's groups as rows, every metric as a sortable
   column, plus a member-growth overlay. Hidden for a community with one group,
   since there is nothing to compare.
@@ -232,9 +269,10 @@ the URL, so any view can be linked to directly.
 
 **Merged** — `/merged`:
 
-- **Combined overview** — total members, leads this week, poll response rate and
-  DM reply rate pooled across both communities, then a roll-up card per community
-  and a member-growth chart with one line per community.
+- **Combined overview** — total members, poll response rate and DM reply rate
+  pooled across both communities, the imported figures summed across them, then a
+  roll-up card per community and a member-growth chart with one line per
+  community.
 - **All groups** — every group from both communities in one sortable table with a
   community column, plus per-community subtotals.
 - **Trends** — the same metrics at community level, one series per community.

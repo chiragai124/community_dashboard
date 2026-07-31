@@ -64,34 +64,6 @@ export function CommunityRollupCard({
         <div className="groupCard__rows">
           {/* Null = this community isn't covered by the source, so the row is
               omitted rather than shown as a fake zero. */}
-          {totals.leads !== null ? (
-            <div className="groupCard__row">
-              <span className="groupCard__rowLabel">Leads this week</span>
-              <span className="groupCard__rowVal">{formatExact(totals.leads)}</span>
-            </div>
-          ) : null}
-          <div className="groupCard__row">
-            <span className="groupCard__rowLabel">Poll response rate</span>
-            <span className="groupCard__rowVal">
-              {formatPercent(totals.pollResponseRatePct)}
-            </span>
-          </div>
-          <div className="groupCard__row">
-            <span className="groupCard__rowLabel">DM reply rate</span>
-            <span className="groupCard__rowVal">{formatPercent(totals.dmReplyRatePct)}</span>
-          </div>
-          {totals.sessions !== null ? (
-            <div className="groupCard__row">
-              <span className="groupCard__rowLabel">Site sessions</span>
-              <span className="groupCard__rowVal">{formatExact(totals.sessions)}</span>
-            </div>
-          ) : null}
-          {totals.leads === null && totals.sessions === null ? (
-            <div className="groupCard__row">
-              <span className="groupCard__rowLabel">Traffic &amp; leads</span>
-              <span className="groupCard__rowVal muted">manual only</span>
-            </div>
-          ) : null}
         </div>
       </div>
 
