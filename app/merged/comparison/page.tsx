@@ -1,6 +1,5 @@
 import { PageHeader } from '@/components/PageHeader';
 import { ComparisonTable, type ComparisonRow } from '@/components/ComparisonTable';
-import { DemoNotice } from '@/components/DemoNotice';
 import { COMMUNITIES, getCommunity, getGroup } from '@/lib/groups';
 import { loadDashboard, perCommunityTotals } from '@/lib/dashboard';
 import { formatExact, formatPercent, pct } from '@/lib/metrics';
@@ -49,7 +48,6 @@ export default async function MergedComparisonPage() {
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
 
         <h2 className="sectionTitle">
           Every group and segment · week of {formatWeekRange(data.displayWeek)}

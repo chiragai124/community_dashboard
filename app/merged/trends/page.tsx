@@ -1,6 +1,5 @@
 import { PageHeader } from '@/components/PageHeader';
 import { TrendsView, type TrendMetric } from '@/components/TrendsView';
-import { DemoNotice } from '@/components/DemoNotice';
 import { COMMUNITIES } from '@/lib/groups';
 import { loadDashboard, multiCommunityRows, perCommunityTotals } from '@/lib/dashboard';
 import { METRIC_DEFS } from '@/lib/metrics';
@@ -30,7 +29,7 @@ export default async function MergedTrendsPage() {
 
   const series = COMMUNITIES.map((c) => ({ key: c.slug, label: c.label }));
   const biggest = [...perCommunityTotals(data)].sort(
-    (a, b) => b.totals.members - a.totals.members,
+    (a, b) => (b.totals.members ?? 0) - (a.totals.members ?? 0),
   )[0];
 
   return (
@@ -43,7 +42,6 @@ export default async function MergedTrendsPage() {
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
         <TrendsView
           metrics={metrics}
           rowsByMetric={rowsByMetric}

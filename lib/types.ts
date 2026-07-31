@@ -17,10 +17,14 @@ export type GroupSlug =
 export type CommunitySlug = 'community-1' | 'community-2';
 
 /**
- * The two file-import sources. Each corresponds to one export the user
- * downloads weekly and uploads here. There are no API connections.
+ * The three file-import sources. Each corresponds to one export the user
+ * downloads and uploads here. There are no API connections.
+ *
+ * `shortio` and `ga4` are community-level (one file each per week). `whatsapp` is
+ * per GROUP, because a chat export is one group's transcript — and it carries a
+ * whole history, so one upload backfills every week it covers.
  */
-export type ImportSource = 'shortio' | 'ga4';
+export type ImportSource = 'shortio' | 'ga4' | 'whatsapp';
 
 /** The three things the top-level switcher can select. */
 export type ScopeSlug = CommunitySlug | 'merged';
@@ -76,12 +80,13 @@ export type SentimentKey = 'positive' | 'neutral' | 'negative';
 export const SENTIMENT_KEYS: SentimentKey[] = ['positive', 'neutral', 'negative'];
 
 /**
- * Hand-entered sentiment for a group-week, with example messages.
+ * Sentiment for a group-week, computed from the chat export by
+ * lib/whatsapp/sentiment.ts.
  *
- * Percentages are stored exactly as typed and are NOT normalised to 100. If they
- * don't add up, that is either a typo or a deliberate "these are the three
- * buckets I counted, some messages fit none" — and quietly rescaling would hide
- * both. The UI shows the shortfall or overshoot instead.
+ * Percentages are shares of the messages scored, so they sum to 100 by
+ * construction. The UI still states how many messages carried a recognised
+ * sentiment word, because a mostly-neutral week is a fact about the method as
+ * much as about the group.
  */
 export interface SentimentBreakdown {
   positivePct: number | null;
@@ -94,27 +99,24 @@ export interface SentimentBreakdown {
 /* --------------------------------------------------- new members by source */
 
 /**
- * Where a week's new members came from, entered by hand.
+ * How a week's new members arrived, read from the chat export's system lines.
  *
- * This is typed rather than derived because it cannot be derived: Short.io
- * reports clicks and GA4 reports sessions, and neither is a join. Apportioning
- * growth by click share would invent a number that looks authoritative.
+ * These are the ONLY two mechanisms WhatsApp distinguishes. It records that
+ * someone "joined using this group's invite link" or that an admin "added" them —
+ * but never WHICH link was clicked, so a Short.io-versus-landing-page split is not
+ * recoverable from any of the three files. Clicks and sessions are shown beside
+ * this as context, never apportioned into it.
  */
-export type MemberSourceKey = 'whatsappLink' | 'landingPage' | 'other';
+export type MemberSourceKey = 'inviteLink' | 'addedByAdmin';
 
-export const MEMBER_SOURCE_KEYS: MemberSourceKey[] = [
-  'whatsappLink',
-  'landingPage',
-  'other',
-];
+export const MEMBER_SOURCE_KEYS: MemberSourceKey[] = ['inviteLink', 'addedByAdmin'];
 
 export const MEMBER_SOURCE_LABELS: Record<MemberSourceKey, string> = {
-  whatsappLink: 'WhatsApp link',
-  landingPage: 'Landing page',
-  other: 'Organic / other',
+  inviteLink: 'Joined via invite link',
+  addedByAdmin: 'Added by an admin',
 };
 
-/** Null per source means "not broken down", never "zero from this source". */
+/** Null per source means "no export covers this week", never "zero from this source". */
 export type NewMembersBySource = Record<MemberSourceKey, number | null>;
 
 /** One poll posted in a group during a week. */
@@ -130,58 +132,33 @@ export interface PollOption {
 }
 
 /**
- * A single manual weekly entry. This is the only hand-typed data in the
- * dashboard; everything in `metrics.ts` is derived from it plus the imports.
+ * The only hand-typed data left in the dashboard: the three things no export
+ * contains.
+ *
+ * WhatsApp exports carry the poll QUESTION but never the votes, and a group
+ * export contains no 1:1 threads at all — so poll counts and DM figures cannot be
+ * derived from any of the three files. Everything else (members, growth, activity,
+ * topics, questions, sentiment, join source) now comes from the imports.
  */
 export interface WeeklyEntry {
   id: string;
   group: GroupSlug;
   /** ISO week start, always a Monday, as YYYY-MM-DD. */
   weekStart: string;
-  totalMembers: number;
-  /**
-   * New members this week. Optional: when omitted it is derived as the delta
-   * against the previous week's `totalMembers`.
-   */
-  newMembersOverride?: number | null;
   polls: Poll[];
   dmsSent: number;
   dmReplies: number;
-  activityLevel: ActivityLevel;
-  /** Why the activity level is what it is — sits beside the badge. */
-  activityNote: string;
-  /** What the week was mostly about, e.g. ['Scholarships', 'Visa process']. */
-  mainTopics: string[];
-  /** What students asked most that week, one entry per question. */
-  commonQuestions: string[];
-  /** How students responded to posted content — polls, announcements, media. */
-  contentResponse: string;
-  /** Hand-entered sentiment split and example messages. */
-  sentiment: SentimentBreakdown;
-  /** Where the week's new members came from. */
-  newMembersBySource: NewMembersBySource;
-  notes: string;
   createdAt: string;
   updatedAt: string;
 }
 
-/** Payload accepted by POST/PUT /api/entries. */
+/** Payload accepted by POST /api/entries. */
 export interface WeeklyEntryInput {
   group: GroupSlug;
   weekStart: string;
-  totalMembers: number;
-  newMembersOverride?: number | null;
   polls?: Poll[];
   dmsSent?: number;
   dmReplies?: number;
-  activityLevel?: ActivityLevel;
-  activityNote?: string;
-  mainTopics?: string[];
-  commonQuestions?: string[];
-  contentResponse?: string;
-  sentiment?: Partial<SentimentBreakdown>;
-  newMembersBySource?: Partial<NewMembersBySource>;
-  notes?: string;
 }
 
 /* --------------------------------------------------------- imported figures */
@@ -242,42 +219,83 @@ export interface ImportedWeek {
 
 /** Pooled figures for a community, or for every community at once. */
 export interface RollupTotals {
-  members: number;
-  newMembers: number;
+  /** Null when no chat export covers the week for any group in scope. */
+  members: number | null;
+  newMembers: number | null;
+  messages: number | null;
+  activeParticipants: number | null;
   /** Responses ÷ members, pooled across the groups in scope. */
   pollResponseRatePct: number | null;
   /** Replies ÷ DMs sent, pooled. */
   dmReplyRatePct: number | null;
-  groupsWithEntry: number;
+  /** Groups with a chat export covering this week, and groups in scope. */
+  groupsWithChat: number;
   groupCount: number;
 }
 
-/** Everything one group needs for one week. All of it manual. */
+/** One extracted term or phrase, with how many messages used it. */
+export interface TopicTerm {
+  term: string;
+  messages: number;
+  score: number;
+}
+
+/** One question shape, and how often it was asked. */
+export interface CommonQuestion {
+  text: string;
+  asked: number;
+}
+
+/**
+ * Everything one group needs for one week.
+ *
+ * Almost all of it comes from the chat export. Only `pollResponses`/`pollCount`
+ * and the DM figures come from the weekly form, because neither poll votes nor
+ * 1:1 threads are present in any export.
+ */
 export interface GroupWeekMetrics {
   group: GroupSlug;
   community: CommunitySlug;
   weekStart: string;
+  /** The week's manual entry (polls + DMs only), when one exists. */
   entry: WeeklyEntry | null;
-  /** Previous week's entry, when one exists. */
-  previousEntry: WeeklyEntry | null;
+  /** The week's chat-derived figures, when an export covers it. */
+  chat: unknown;
 
   totalMembers: number | null;
   newMembers: number | null;
-  /** Week-over-week member growth, as a percentage. */
   memberGrowthPct: number | null;
+  /** Joins via invite link vs added by an admin. */
+  newMembersBySource: NewMembersBySource;
+
+  messages: number | null;
+  activeParticipants: number | null;
 
   pollResponses: number;
   pollCount: number;
-  /** responses / members, as a percentage. */
   pollResponseRatePct: number | null;
 
   dmsSent: number;
   dmReplies: number;
-  /** replies / DMs sent, as a percentage. */
   dmReplyRatePct: number | null;
 
   activityLevel: ActivityLevel | null;
-  notes: string;
+  topics: TopicTerm[];
+  questions: CommonQuestion[];
+  sentiment: SentimentBreakdown;
+  /** Messages scored, and how many carried a recognised sentiment word. */
+  sentimentScored: number;
+  sentimentWithSignal: number;
+}
+
+export interface PollHistoryRow {
+  weekStart: string;
+  question: string;
+  responses: number;
+  topAnswer: string;
+  topAnswerCount: number;
+  /** responses / member count that week, as a percentage. */
+  responseRatePct: number | null;
 }
 
 /* ----------------------------------------------------------------- leads -- */
@@ -286,19 +304,20 @@ export interface GroupWeekMetrics {
  * One hand-entered lead.
  *
  * PERSONAL DATA. Name, email and phone are identifying, so these rows live only
- * in data/leads.json (gitignored) and are never sent anywhere. Nothing in the app
- * transmits them off the machine.
+ * in data/leads.json (gitignored) and are never sent anywhere.
+ *
+ * Still hand-entered because nothing in the three exports identifies a lead: GA4
+ * reports sessions, Short.io reports clicks, and a WhatsApp join is a member, not
+ * a registration. University and country in particular appear in none of them.
  */
 export interface Lead {
   id: string;
-  /** The group that produced the lead; its community follows from the slug. */
   group: GroupSlug;
   name: string;
   email: string;
   phone: string;
   university: string;
   country: string;
-  /** ISO week start the lead is filed under, so "this week" is answerable. */
   weekStart: string;
   createdAt: string;
 }
@@ -322,16 +341,6 @@ export interface LeadBreakdownRow {
   sharePct: number;
 }
 
-export interface PollHistoryRow {
-  weekStart: string;
-  question: string;
-  responses: number;
-  topAnswer: string;
-  topAnswerCount: number;
-  /** responses / member count that week, as a percentage. */
-  responseRatePct: number | null;
-}
-
 /** One row per week for the multi-series charts: `week` plus a key per group. */
 export interface TrendRow {
   week: string;
@@ -342,5 +351,7 @@ export type MetricKey =
   | 'totalMembers'
   | 'newMembers'
   | 'memberGrowthPct'
+  | 'messages'
+  | 'activeParticipants'
   | 'pollResponseRatePct'
   | 'dmReplyRatePct';

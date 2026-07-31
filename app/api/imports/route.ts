@@ -2,31 +2,44 @@ import { NextResponse } from 'next/server';
 import {
   ImportError,
   SOURCE_META,
+  analyseChatExport,
+  deleteChatImport,
   deleteImport,
   extractGa4,
   extractShortio,
   isImportSource,
+  saveChatImport,
   saveImport,
 } from '@/lib/imports';
-import { isCommunitySlug, communityHasImport } from '@/lib/groups';
+import { getGroup, isCommunitySlug, isGroupSlug, communityHasImport } from '@/lib/groups';
 import { parseISODate, weekStartOf } from '@/lib/weeks';
 
 /**
  * Upload and removal of the weekly exports.
  *
- * POST multipart/form-data with `file`, `source`, `community` and `weekStart`.
- * The file is parsed in-process and only the extracted figures are stored — the
- * upload itself is never written to disk, so the store stays small and no
- * spreadsheet of student data lingers on the server.
+ * POST multipart/form-data with `file`, `source`, `community`, and then either
+ * `weekStart` (Short.io, GA4) or `group` (WhatsApp — a transcript belongs to one
+ * group and carries its own history, so it needs no week).
  *
- * DELETE ?id=… removes one week's figures.
+ * EVERY upload is parsed in-process and discarded. Only derived figures are
+ * stored, so no spreadsheet and no chat transcript ever lands on disk. For the
+ * chat export that means counts, term frequencies, questions, sentiment
+ * percentages and three example quotes per sentiment — never the transcript,
+ * sender names or phone numbers.
+ *
+ * DELETE ?id=… removes one week's Short.io/GA4 figures; DELETE ?group=… removes a
+ * group's whole chat-derived record.
  */
 
 // Needs the Node runtime: parsing an .xlsx uses zlib.
 export const runtime = 'nodejs';
 
-/** Generous for these exports, small enough that a mis-picked file is refused. */
-const MAX_BYTES = 15 * 1024 * 1024;
+/**
+ * Generous for these exports, small enough that a mis-picked file is refused.
+ * A media-free chat export of a busy year-old group is a few MB; a media-INCLUDED
+ * one is hundreds, which is why the steps say "Without media".
+ */
+const MAX_BYTES = 60 * 1024 * 1024;
 
 export async function POST(request: Request) {
   let form: FormData;
@@ -46,7 +59,7 @@ export async function POST(request: Request) {
 
   if (!isImportSource(source)) {
     return NextResponse.json(
-      { error: 'Unknown source. Expected "shortio" or "ga4".' },
+      { error: 'Unknown source. Expected "shortio", "ga4" or "whatsapp".' },
       { status: 400 },
     );
   }
@@ -59,7 +72,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekRaw)) {
+  // A chat export backfills every week it covers, so it needs no week — but it
+  // does need a group, since a transcript belongs to exactly one group.
+  if (source !== 'whatsapp' && !/^\d{4}-\d{2}-\d{2}$/.test(weekRaw)) {
     return NextResponse.json(
       { error: 'weekStart must be a YYYY-MM-DD date.' },
       { status: 400 },
@@ -70,7 +85,11 @@ export async function POST(request: Request) {
   }
   if (file.size > MAX_BYTES) {
     return NextResponse.json(
-      { error: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is 15 MB.` },
+      {
+        error:
+          `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is ` +
+          `${MAX_BYTES / 1024 / 1024} MB. For a chat export, re-export it "Without media".`,
+      },
       { status: 413 },
     );
   }
@@ -88,11 +107,43 @@ export async function POST(request: Request) {
     );
   }
 
-  // Always snap to the Monday, so a mid-week date can't create a second row.
-  const weekStart = weekStartOf(parseISODate(weekRaw));
-
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
+
+    if (source === 'whatsapp') {
+      const group = form.get('group');
+      if (!isGroupSlug(group)) {
+        return NextResponse.json(
+          { error: 'A chat export needs a `group` — a transcript belongs to one group.' },
+          { status: 400 },
+        );
+      }
+      if (getGroup(group)?.community !== community) {
+        return NextResponse.json(
+          { error: 'That group is not part of this community.' },
+          { status: 400 },
+        );
+      }
+
+      // Parsed in memory; the transcript is never written to disk. Only counts,
+      // terms, questions, percentages and three example quotes per sentiment are
+      // stored — see lib/whatsapp/store.ts.
+      const analysis = analyseChatExport(buffer, file.name, group);
+      const stored = await saveChatImport(analysis, file.name);
+      return NextResponse.json({
+        chatImport: {
+          group: stored.group,
+          filename: stored.filename,
+          uploadedAt: stored.uploadedAt,
+          membersKnown: stored.membersKnown,
+          weeks: stored.weeks.length,
+          notes: stored.notes,
+        },
+      });
+    }
+
+    // Always snap to the Monday, so a mid-week date can't create a second row.
+    const weekStart = weekStartOf(parseISODate(weekRaw));
 
     if (source === 'shortio') {
       const { figures, notes } = extractShortio(buffer, file.name);
@@ -147,7 +198,19 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const id = new URL(request.url).searchParams.get('id');
+  const params = new URL(request.url).searchParams;
+
+  // A chat import is keyed by group, not by an id, since there is one per group.
+  const group = params.get('group');
+  if (group) {
+    const removed = await deleteChatImport(group);
+    if (!removed) {
+      return NextResponse.json({ error: 'No chat import for that group.' }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  const id = params.get('id');
   if (!id) {
     return NextResponse.json({ error: 'Missing id.' }, { status: 400 });
   }

@@ -4,18 +4,25 @@ import { StatCard, StatCardPercentDelta, ActivityBadge } from '@/components/Stat
 import { PollHistoryTable } from '@/components/PollHistoryTable';
 import { WeeklyEntryForm } from '@/components/WeeklyEntryForm';
 import { SingleTrendChart, Sparkline } from '@/components/charts';
-import { DemoNotice } from '@/components/DemoNotice';
-import { GroupTopics, WeekQualitative, hasQualitative } from '@/components/WeekQualitative';
+import { CommonQuestions, GroupTopics } from '@/components/ChatInsights';
 import { SentimentPanel, hasSentiment } from '@/components/SentimentPanel';
 import { MemberSourceSplit } from '@/components/MemberSourceSplit';
 import { getCommunity, getGroup } from '@/lib/groups';
 import { entryWeekOptions, groupSeries, loadDashboard } from '@/lib/dashboard';
 import { buildPollHistory, formatExact, formatPercent } from '@/lib/metrics';
+import { chatImportFor } from '@/lib/whatsapp/store';
 import { formatWeekRange } from '@/lib/weeks';
 
 // Every figure here is read at request time — nothing is prerendered.
 export const dynamic = 'force-dynamic';
 
+/**
+ * One group's week.
+ *
+ * Almost everything here is computed from that group's chat export. The only
+ * typed figures are poll responses and DM counts, and both are labelled as such
+ * on the tile — so a reader always knows which numbers came from a file.
+ */
 export default async function GroupPage({
   params,
 }: {
@@ -33,14 +40,23 @@ export default async function GroupPage({
   if (!metrics) notFound();
 
   const series = groupSeries(data, group.slug);
-  const pollHistory = buildPollHistory(data.entries, group.slug);
+  const pollHistory = buildPollHistory(data.entries, group.slug, data.chatImports);
   const groupEntries = data.entries.filter((e) => e.group === group.slug);
-  const hasEarlierEntry = groupEntries.some((e) => e.weekStart < data.displayWeek);
+  const chatRecord = chatImportFor(data.chatImports, group.slug);
 
   const memberPoints = series.map((m) => ({ week: m.weekStart, value: m.totalMembers }));
   const newMemberPoints = series.map((m) => ({ week: m.weekStart, value: m.newMembers }));
+  const messagePoints = series.map((m) => ({ week: m.weekStart, value: m.messages }));
+  const activePoints = series.map((m) => ({ week: m.weekStart, value: m.activeParticipants }));
   const pollRatePoints = series.map((m) => ({ week: m.weekStart, value: m.pollResponseRatePct }));
   const dmRatePoints = series.map((m) => ({ week: m.weekStart, value: m.dmReplyRatePct }));
+
+  // The form shows the poll response rate live, so it needs the export's member
+  // count per week. Read-only — members are never editable.
+  const membersByWeek: Record<string, number | null> = {};
+  for (const week of entryWeekOptions()) {
+    membersByWeek[week] = chatRecord?.weeks.find((w) => w.weekStart === week)?.members ?? null;
+  }
 
   return (
     <>
@@ -50,10 +66,12 @@ export default async function GroupPage({
         titleAccessory={
           <>
             <ActivityBadge level={metrics.activityLevel} />
-            {/* The "why" sits directly beside the badge, where the level is read. */}
-            {metrics.entry?.activityNote.trim() ? (
-              <span className="activityWhy" title={metrics.entry.activityNote}>
-                {metrics.entry.activityNote}
+            {/* Activity is now a measurement, not a note: it comes from this
+                week's message volume against the group's own median week. */}
+            {metrics.messages !== null ? (
+              <span className="activityWhy">
+                {formatExact(metrics.messages)} messages ·{' '}
+                {formatExact(metrics.activeParticipants)} posting
               </span>
             ) : null}
           </>
@@ -62,12 +80,22 @@ export default async function GroupPage({
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
-
-        {metrics.entry === null ? (
+        {chatRecord === null ? (
           <div className="prefillNote" style={{ marginBottom: 18 }}>
-            No manual entry saved for {formatWeekRange(data.displayWeek)} yet. Member, poll and
-            DM figures below stay blank until you add it — the form is at the bottom of this page.
+            No chat export imported for {group.label} yet. Members, growth, activity, topics,
+            questions and sentiment all come from that file — import it from the{' '}
+            {community.label} overview.
+          </div>
+        ) : metrics.chat === null ? (
+          <div className="prefillNote" style={{ marginBottom: 18 }}>
+            The export on file for {group.label} doesn’t cover{' '}
+            {formatWeekRange(data.displayWeek)}. Re-export the chat to bring it up to date.
+          </div>
+        ) : !chatRecord.membersKnown ? (
+          <div className="prefillNote" style={{ marginBottom: 18 }}>
+            This export doesn’t reach the group’s creation, so there is no baseline for an
+            absolute member count — net change per week is shown instead. Export the full
+            history to get absolute figures.
           </div>
         ) : null}
 
@@ -76,7 +104,7 @@ export default async function GroupPage({
             label="Members"
             value={formatExact(metrics.totalMembers)}
             delta={metrics.newMembers}
-            deltaSuffix="vs last week"
+            deltaSuffix="net this week"
             accent
           >
             <Sparkline points={memberPoints} />
@@ -85,19 +113,23 @@ export default async function GroupPage({
           <StatCardPercentDelta
             label="Member growth"
             value={formatPercent(metrics.memberGrowthPct)}
-            hint={
-              metrics.previousEntry
-                ? `from ${formatExact(metrics.previousEntry.totalMembers)} last week`
-                : 'needs a previous week'
-            }
+            hint="week over week, from the export"
           >
             <Sparkline points={newMemberPoints} />
           </StatCardPercentDelta>
 
+          <StatCard
+            label="Messages"
+            value={formatExact(metrics.messages)}
+            hint={`${formatExact(metrics.activeParticipants)} people posted`}
+          >
+            <Sparkline points={messagePoints} />
+          </StatCard>
+
           <StatCardPercentDelta
             label="Poll response rate"
             value={formatPercent(metrics.pollResponseRatePct)}
-            hint={`${formatExact(metrics.pollResponses)} responses · ${metrics.pollCount} poll${metrics.pollCount === 1 ? '' : 's'}`}
+            hint={`${formatExact(metrics.pollResponses)} responses · ${metrics.pollCount} poll${metrics.pollCount === 1 ? '' : 's'} · typed`}
           >
             <Sparkline points={pollRatePoints} />
           </StatCardPercentDelta>
@@ -105,68 +137,70 @@ export default async function GroupPage({
           <StatCardPercentDelta
             label="DM reply rate"
             value={formatPercent(metrics.dmReplyRatePct)}
-            hint={`${formatExact(metrics.dmReplies)} replies from ${formatExact(metrics.dmsSent)} DMs`}
+            hint={`${formatExact(metrics.dmReplies)} replies from ${formatExact(metrics.dmsSent)} DMs · typed`}
           >
             <Sparkline points={dmRatePoints} />
           </StatCardPercentDelta>
-
         </div>
 
-        {/* Sentiment and the source split are per group and per week, so they sit
-            with the group's own figures rather than on the community overview. */}
-        {metrics.entry && hasSentiment(metrics.entry.sentiment) ? (
-          <div style={{ marginTop: 14 }}>
-            <SentimentPanel
-              sentiment={metrics.entry.sentiment}
-              subtitle={`${group.label} · week of ${formatWeekRange(data.displayWeek)}`}
-            />
-          </div>
-        ) : null}
-
-        {metrics.entry ? (
-          <div style={{ marginTop: 14 }}>
-            <MemberSourceSplit
-              split={metrics.entry.newMembersBySource}
-              newMembers={metrics.newMembers}
-              subtitle={`${group.label} · week of ${formatWeekRange(data.displayWeek)}`}
-            />
-          </div>
-        ) : null}
-
-        {metrics.notes.trim() !== '' || hasQualitative(metrics.entry) || (metrics.entry?.mainTopics.length ?? 0) > 0 ? (
+        {metrics.topics.length > 0 ? (
           <section className="card" style={{ marginTop: 14 }}>
             <div className="card__head">
-              <div className="card__title">
-                This week’s notes · {formatWeekRange(data.displayWeek)}
+              <div>
+                <div className="card__title">Topics · {formatWeekRange(data.displayWeek)}</div>
+                <div className="card__sub">
+                  The words and phrases that recurred most, with the number of messages using each
+                </div>
               </div>
             </div>
             <div className="card__body">
-              {/* Always visible, above the collapsed secondary notes. */}
-              {(metrics.entry?.mainTopics.length ?? 0) > 0 ? (
-                <div style={{ marginBottom: 12 }}>
-                  <GroupTopics entry={metrics.entry} variant="panel" label="Topics this week" />
-                </div>
-              ) : null}
-              {metrics.notes.trim() !== '' ? (
-                <p
-                  style={{
-                    margin: hasQualitative(metrics.entry) ? '0 0 12px' : 0,
-                    fontSize: 13.5,
-                    color: 'var(--ink-secondary)',
-                  }}
-                >
-                  {metrics.notes}
-                </p>
-              ) : null}
-              {/* Same collapsed-by-default section as the card, so the two views
-                  never drift apart. */}
-              <WeekQualitative
-                entry={metrics.entry}
-                variant="panel"
-                label="Topics, questions & content response"
-              />
+              <div className="tagRow">
+                {metrics.topics.slice(0, 12).map((topic) => (
+                  <span className="tag" key={topic.term}>
+                    {topic.term}
+                    <span className="tag__count"> {topic.messages}</span>
+                  </span>
+                ))}
+              </div>
+              <p className="chartNote">
+                Counted per message, so one person repeating a word can’t define the week.
+                This is frequency, not a summary of what was meant.
+              </p>
             </div>
           </section>
+        ) : null}
+
+        {hasSentiment(metrics.sentiment) ? (
+          <div style={{ marginTop: 14 }}>
+            <SentimentPanel
+              sentiment={metrics.sentiment}
+              subtitle={
+                metrics.sentimentScored > 0
+                  ? `${group.label} · keyword-based · ${Math.round(
+                      (metrics.sentimentWithSignal / metrics.sentimentScored) * 100,
+                    )}% of ${formatExact(metrics.sentimentScored)} messages carried a recognised word`
+                  : `${group.label} · ${formatWeekRange(data.displayWeek)}`
+              }
+            />
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: 14 }}>
+          <MemberSourceSplit
+            split={metrics.newMembersBySource}
+            newMembers={metrics.newMembers}
+            title="How new members arrived"
+            subtitle={`${group.label} · ${formatWeekRange(data.displayWeek)} · from the export’s join lines`}
+          />
+        </div>
+
+        {metrics.questions.length > 0 ? (
+          <div style={{ marginTop: 14 }}>
+            <CommonQuestions
+              questions={metrics.questions}
+              subtitle={`${group.label} · ${formatWeekRange(data.displayWeek)}`}
+            />
+          </div>
         ) : null}
 
         <div className="grid grid--halves" style={{ marginTop: 14 }}>
@@ -191,17 +225,18 @@ export default async function GroupPage({
             <div className="card__head">
               <div>
                 <div className="card__title">
-                  Poll response rate · last {pollRatePoints.length} weeks
+                  Active members · last {activePoints.length} weeks
                 </div>
-                <div className="card__sub">Responses ÷ member count</div>
+                <div className="card__sub">People who posted at least once</div>
               </div>
             </div>
             <div className="card__body">
               <SingleTrendChart
-                points={pollRatePoints}
-                seriesLabel="Poll response rate"
-                unit="percent"
+                points={activePoints}
+                seriesLabel="Active members"
+                unit="count"
                 height={216}
+                wash
               />
             </div>
           </section>
@@ -212,15 +247,14 @@ export default async function GroupPage({
           <PollHistoryTable rows={pollHistory} />
         </section>
 
-        <h2 className="sectionTitle">Weekly entry</h2>
+        <h2 className="sectionTitle">Polls &amp; DMs</h2>
         <section className="card">
           <div className="card__head">
             <div>
-              <div className="card__title">Add or edit {group.label}’s week</div>
+              <div className="card__title">The only figures still typed</div>
               <div className="card__sub">
-                {hasEarlierEntry
-                  ? 'Pre-filled from last week — edit the member count and the delta is worked out for you'
-                  : 'First entry for this group — later weeks pre-fill from it automatically'}
+                Poll votes and 1:1 DMs appear in no export — everything else on this page is
+                computed from the chat import
               </div>
             </div>
           </div>
@@ -231,6 +265,7 @@ export default async function GroupPage({
               weekOptions={entryWeekOptions()}
               entries={groupEntries}
               defaultWeek={data.displayWeek}
+              membersByWeek={membersByWeek}
             />
           </div>
         </section>

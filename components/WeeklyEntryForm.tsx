@@ -2,32 +2,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type {
-  ActivityLevel,
-  GroupSlug,
-  MemberSourceKey,
-  Poll,
-  SentimentKey,
-  WeeklyEntry,
-} from '@/lib/types';
-import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS, SENTIMENT_KEYS } from '@/lib/types';
-import { formatPercent, formatSigned, formatSignedPercent } from '@/lib/metrics';
+import type { GroupSlug, Poll, WeeklyEntry } from '@/lib/types';
+import { formatPercent } from '@/lib/metrics';
 import { formatWeekRange, isoWeekNumber } from '@/lib/weeks';
 
 /**
- * The manual weekly entry form — the only place data is typed by hand, so it is
- * built for speed:
+ * The last hand-typed form in the dashboard: poll responses and DM figures.
  *
- *  • Member count is pre-filled with last week's number, so the user edits only
- *    the delta.
- *  • New members are derived from that delta automatically; the field is there
- *    purely to override it when the count came from somewhere else.
- *  • Activity level defaults to last week's choice.
- *  • DMs show last week's volume as placeholder text rather than pre-filling it,
- *    since a stale DM count would silently become a wrong data point.
- *  • Every derived rate updates live as you type, so mistakes are obvious before
- *    saving.
- *  • Switching weeks needs no round-trip: this group's entries are already here.
+ * Everything else — members, growth, join source, activity, topics, questions,
+ * sentiment — now comes from the chat export. These three remain because no
+ * export contains them: WhatsApp exports carry a poll's question but never its
+ * votes, and a group export contains no 1:1 threads at all.
+ *
+ * `members` comes in from the chat import purely to show the response rate live
+ * as you type. It is never editable here.
  */
 
 interface FormPoll {
@@ -54,35 +42,6 @@ function toFormPolls(polls: Poll[]): FormPoll[] {
   }));
 }
 
-/**
- * Split on NEWLINES only. Used for quoted message snippets, which routinely
- * contain commas — splitting on those would chop one quote into several.
- */
-function splitLines(value: string): string[] {
-  return value
-    .split('\n')
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
-    .slice(0, 3);
-}
-
-/** Split a comma- or newline-separated field into trimmed, non-empty items. */
-function splitList(value: string): string[] {
-  return value
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
-}
-
-/** A stored percentage back into a field value; '' for "not entered". */
-function pctToField(value: number | null): string {
-  return value === null || value === undefined ? '' : String(value);
-}
-
-function countToField(value: number | null): string {
-  return value === null || value === undefined ? '' : String(value);
-}
-
 function num(value: string): number | null {
   if (value.trim() === '') return null;
   const parsed = Number(value);
@@ -95,14 +54,15 @@ export function WeeklyEntryForm({
   weekOptions,
   entries,
   defaultWeek,
+  membersByWeek,
 }: {
   group: GroupSlug;
   groupLabel: string;
-  /** Selectable weeks, newest first. */
   weekOptions: string[];
-  /** Every stored entry for this group, so week switching is instant. */
   entries: WeeklyEntry[];
   defaultWeek: string;
+  /** Member count per week, from the chat export. Read-only context. */
+  membersByWeek: Record<string, number | null>;
 }) {
   const router = useRouter();
   const [weekStart, setWeekStart] = useState(defaultWeek);
@@ -111,7 +71,6 @@ export function WeeklyEntryForm({
     () => entries.find((e) => e.weekStart === weekStart) ?? null,
     [entries, weekStart],
   );
-
   const previous = useMemo(
     () =>
       [...entries]
@@ -120,142 +79,36 @@ export function WeeklyEntryForm({
     [entries, weekStart],
   );
 
-  const [totalMembers, setTotalMembers] = useState('');
-  const [newMembersOverride, setNewMembersOverride] = useState('');
   const [dmsSent, setDmsSent] = useState('');
   const [dmReplies, setDmReplies] = useState('');
-  const [activityLevel, setActivityLevel] = useState<ActivityLevel>('Medium');
-  const [activityNote, setActivityNote] = useState('');
-  const [mainTopics, setMainTopics] = useState('');
-  const [commonQuestions, setCommonQuestions] = useState('');
-  const [contentResponse, setContentResponse] = useState('');
-  const [notes, setNotes] = useState('');
   const [polls, setPolls] = useState<FormPoll[]>([structuredClone(EMPTY_POLL)]);
-
-  // Sentiment percentages and up to three example snippets each, kept as strings
-  // so a half-typed number doesn't fight the input.
-  const [sentimentPct, setSentimentPct] = useState<Record<SentimentKey, string>>({
-    positive: '',
-    neutral: '',
-    negative: '',
-  });
-  const [sentimentExamples, setSentimentExamples] = useState<Record<SentimentKey, string>>({
-    positive: '',
-    neutral: '',
-    negative: '',
-  });
-  const [sources, setSources] = useState<Record<MemberSourceKey, string>>({
-    whatsappLink: '',
-    landingPage: '',
-    other: '',
-  });
-
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  // Load the selected week: the saved entry if there is one, otherwise last
-  // week's numbers as a starting point.
-  //
-  // Deliberately does NOT clear `message`: saving calls router.refresh(), which
-  // makes `existing` appear and re-runs this effect — clearing here would wipe
-  // the "Saved" confirmation the user needs to see. The week picker clears it
-  // instead, which is the only time a stale message would mislead.
+  // Load the selected week. Deliberately does NOT clear `message`: saving calls
+  // router.refresh(), which makes `existing` appear and re-runs this effect —
+  // clearing here would wipe the "Saved" confirmation. The week picker clears it.
   useEffect(() => {
     if (existing) {
-      setTotalMembers(String(existing.totalMembers));
-      setNewMembersOverride(
-        existing.newMembersOverride === null || existing.newMembersOverride === undefined
-          ? ''
-          : String(existing.newMembersOverride),
-      );
       setDmsSent(String(existing.dmsSent));
       setDmReplies(String(existing.dmReplies));
-      setActivityLevel(existing.activityLevel);
-      setActivityNote(existing.activityNote);
-      // Topics are entered comma-separated; questions one per line.
-      setMainTopics(existing.mainTopics.join(', '));
-      setCommonQuestions(existing.commonQuestions.join('\n'));
-      setContentResponse(existing.contentResponse);
-      setSentimentPct({
-        positive: pctToField(existing.sentiment.positivePct),
-        neutral: pctToField(existing.sentiment.neutralPct),
-        negative: pctToField(existing.sentiment.negativePct),
-      });
-      setSentimentExamples({
-        positive: existing.sentiment.examples.positive.join('\n'),
-        neutral: existing.sentiment.examples.neutral.join('\n'),
-        negative: existing.sentiment.examples.negative.join('\n'),
-      });
-      setSources({
-        whatsappLink: countToField(existing.newMembersBySource.whatsappLink),
-        landingPage: countToField(existing.newMembersBySource.landingPage),
-        other: countToField(existing.newMembersBySource.other),
-      });
-      setNotes(existing.notes);
       setPolls(toFormPolls(existing.polls));
       return;
     }
-    setTotalMembers(previous ? String(previous.totalMembers) : '');
-    setNewMembersOverride('');
+    // Nothing carries over: a stale DM count would silently become a wrong data
+    // point, and last week's poll is not this week's poll.
     setDmsSent('');
     setDmReplies('');
-    setActivityLevel(previous?.activityLevel ?? 'Medium');
-    // The qualitative fields describe THIS week, so they never carry over from
-    // last week — a stale topic list would read as a fresh observation.
-    setActivityNote('');
-    setMainTopics('');
-    setCommonQuestions('');
-    setContentResponse('');
-    // Sentiment and the source split describe THIS week's messages and joins, so
-    // they never carry over — a stale split would silently double-count a source.
-    setSentimentPct({ positive: '', neutral: '', negative: '' });
-    setSentimentExamples({ positive: '', neutral: '', negative: '' });
-    setSources({ whatsappLink: '', landingPage: '', other: '' });
-    setNotes('');
     setPolls([structuredClone(EMPTY_POLL)]);
-  }, [existing, previous, weekStart]);
+  }, [existing, weekStart]);
 
-  /* ---------------------------------------------------------- live derived */
-
-  const totalMembersNum = num(totalMembers);
-  const overrideNum = num(newMembersOverride);
-  const derivedNewMembers =
-    overrideNum !== null
-      ? overrideNum
-      : totalMembersNum !== null && previous
-        ? totalMembersNum - previous.totalMembers
-        : null;
-
-  const growthPct =
-    derivedNewMembers !== null && previous && previous.totalMembers > 0
-      ? (derivedNewMembers / previous.totalMembers) * 100
-      : null;
-
+  const members = membersByWeek[weekStart] ?? null;
   const pollResponseTotal = polls.reduce(
-    (sum, poll) =>
-      sum + poll.options.reduce((s, o) => s + (num(o.count) ?? 0), 0),
+    (sum, poll) => sum + poll.options.reduce((s, o) => s + (num(o.count) ?? 0), 0),
     0,
   );
-
   const pollRate =
-    totalMembersNum && totalMembersNum > 0 ? (pollResponseTotal / totalMembersNum) * 100 : null;
-
-  // Live previews for the qualitative fields, so the reader sees how their text
-  // will be split before they save it.
-  const topicPreview = splitList(mainTopics);
-  const questionCount = splitList(commonQuestions).length;
-
-  // Percentages are shown summed rather than auto-normalised: if they don't reach
-  // 100 the user should see that and decide, not have it silently rescaled.
-  const sentimentEntered = SENTIMENT_KEYS.filter((k) => num(sentimentPct[k]) !== null);
-  const sentimentSum = sentimentEntered.reduce((sum, k) => sum + (num(sentimentPct[k]) ?? 0), 0);
-
-  // The source split is checked against the week's new-member figure, so a
-  // breakdown that contradicts the headline number is caught before saving.
-  const sourceEntered = MEMBER_SOURCE_KEYS.filter((k) => num(sources[k]) !== null);
-  const sourceTotal = sourceEntered.reduce((sum, k) => sum + (num(sources[k]) ?? 0), 0);
-  const sourceMismatch =
-    sourceEntered.length > 0 && derivedNewMembers !== null && sourceTotal !== derivedNewMembers;
+    members !== null && members > 0 ? (pollResponseTotal / members) * 100 : null;
 
   const dmsSentNum = num(dmsSent);
   const dmRepliesNum = num(dmReplies);
@@ -264,15 +117,15 @@ export function WeeklyEntryForm({
       ? (dmRepliesNum / dmsSentNum) * 100
       : null;
 
-  /* -------------------------------------------------------------- handlers */
-
   function updatePoll(index: number, patch: Partial<FormPoll>) {
-    setPolls((current) =>
-      current.map((poll, i) => (i === index ? { ...poll, ...patch } : poll)),
-    );
+    setPolls((current) => current.map((poll, i) => (i === index ? { ...poll, ...patch } : poll)));
   }
 
-  function updateOption(pollIndex: number, optionIndex: number, patch: Partial<{ label: string; count: string }>) {
+  function updateOption(
+    pollIndex: number,
+    optionIndex: number,
+    patch: Partial<{ label: string; count: string }>,
+  ) {
     setPolls((current) =>
       current.map((poll, i) =>
         i === pollIndex
@@ -291,8 +144,8 @@ export function WeeklyEntryForm({
     event.preventDefault();
     setMessage(null);
 
-    if (totalMembersNum === null || totalMembersNum < 0) {
-      setMessage({ kind: 'err', text: 'Enter the total member count for this week.' });
+    if (dmRepliesNum !== null && dmsSentNum !== null && dmRepliesNum > dmsSentNum) {
+      setMessage({ kind: 'err', text: 'DM replies cannot exceed DMs sent.' });
       return;
     }
 
@@ -313,47 +166,16 @@ export function WeeklyEntryForm({
         body: JSON.stringify({
           group,
           weekStart,
-          totalMembers: totalMembersNum,
-          newMembersOverride: overrideNum,
           polls: payloadPolls,
           dmsSent: dmsSentNum ?? 0,
           dmReplies: dmRepliesNum ?? 0,
-          activityLevel,
-          activityNote: activityNote.trim(),
-          // Sent as arrays; the API also accepts the raw strings and splits them.
-          mainTopics: splitList(mainTopics),
-          commonQuestions: splitList(commonQuestions),
-          contentResponse: contentResponse.trim(),
-          sentiment: {
-            positivePct: num(sentimentPct.positive),
-            neutralPct: num(sentimentPct.neutral),
-            negativePct: num(sentimentPct.negative),
-            // Arrays, not joined strings: a quoted message often contains a comma
-            // and would otherwise be split into fragments by the API.
-            examples: {
-              positive: splitLines(sentimentExamples.positive),
-              neutral: splitLines(sentimentExamples.neutral),
-              negative: splitLines(sentimentExamples.negative),
-            },
-          },
-          newMembersBySource: {
-            whatsappLink: num(sources.whatsappLink),
-            landingPage: num(sources.landingPage),
-            other: num(sources.other),
-          },
-          notes: notes.trim(),
         }),
       });
-
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Save failed (${res.status})`);
       }
-
-      setMessage({
-        kind: 'ok',
-        text: `Saved ${groupLabel} · W${isoWeekNumber(weekStart)}.`,
-      });
+      setMessage({ kind: 'ok', text: `Saved ${groupLabel} · W${isoWeekNumber(weekStart)}.` });
       router.refresh();
     } catch (err) {
       setMessage({
@@ -367,22 +189,19 @@ export function WeeklyEntryForm({
 
   return (
     <form className="form" onSubmit={submit}>
-      {existing ? (
-        <div className="prefillNote">
-          Editing the saved entry for <strong>{formatWeekRange(weekStart)}</strong>. Saving
-          overwrites it.
-        </div>
-      ) : previous ? (
-        <div className="prefillNote">
-          Member count pre-filled from <strong>{formatWeekRange(previous.weekStart)}</strong> (
-          {previous.totalMembers.toLocaleString('en-US')} members) — just edit it to this week’s
-          number and the delta is worked out for you.
-        </div>
-      ) : (
-        <div className="prefillNote">
-          First entry for {groupLabel}. Growth figures start from next week’s entry.
-        </div>
-      )}
+      <div className="prefillNote">
+        {existing ? (
+          <>
+            Editing the saved entry for <strong>{formatWeekRange(weekStart)}</strong>. Saving
+            overwrites it.
+          </>
+        ) : (
+          <>
+            Polls and DMs only — these are the two things no export contains. Members,
+            growth, topics and sentiment all come from the chat import.
+          </>
+        )}
+      </div>
 
       <div className="formGrid">
         <div className="field">
@@ -400,54 +219,13 @@ export function WeeklyEntryForm({
             {weekOptions.map((week) => (
               <option key={week} value={week}>
                 W{isoWeekNumber(week)} · {formatWeekRange(week)}
-                {entries.some((e) => e.weekStart === week) ? ' · saved' : ''}
               </option>
             ))}
           </select>
-          <span className="field__computed">&nbsp;</span>
-        </div>
-
-        <div className="field">
-          <label className="field__label" htmlFor="entry-members">
-            Total members
-            <span className="field__hint">required</span>
-          </label>
-          <input
-            id="entry-members"
-            type="number"
-            min="0"
-            inputMode="numeric"
-            value={totalMembers}
-            onChange={(e) => setTotalMembers(e.target.value)}
-            placeholder={previous ? String(previous.totalMembers) : '0'}
-            required
-          />
           <span className="field__computed">
-            {growthPct !== null ? `${formatSignedPercent(growthPct)} vs last week` : ' '}
-          </span>
-        </div>
-
-        <div className="field">
-          <label className="field__label" htmlFor="entry-new">
-            New members
-            <span className="field__hint">auto</span>
-          </label>
-          <input
-            id="entry-new"
-            type="number"
-            inputMode="numeric"
-            value={newMembersOverride}
-            onChange={(e) => setNewMembersOverride(e.target.value)}
-            placeholder={
-              derivedNewMembers !== null && overrideNum === null
-                ? String(derivedNewMembers)
-                : 'auto from delta'
-            }
-          />
-          <span className="field__computed">
-            {derivedNewMembers !== null
-              ? `${formatSigned(derivedNewMembers)} ${overrideNum !== null ? 'entered' : 'from delta'}`
-              : ' '}
+            {members !== null
+              ? `${members.toLocaleString('en-US')} members (from the export)`
+              : 'no chat export covers this week'}
           </span>
         </div>
 
@@ -462,233 +240,31 @@ export function WeeklyEntryForm({
             inputMode="numeric"
             value={dmsSent}
             onChange={(e) => setDmsSent(e.target.value)}
-            placeholder={previous ? `last week: ${previous.dmsSent}` : '0'}
+            placeholder={previous ? String(previous.dmsSent) : '—'}
           />
-          <span className="field__computed">&nbsp;</span>
+          <span className="field__computed">
+            {previous ? `last week: ${previous.dmsSent}` : ' '}
+          </span>
         </div>
 
         <div className="field">
-          <label className="field__label" htmlFor="entry-replies">
+          <label className="field__label" htmlFor="entry-dm-replies">
             DM replies
           </label>
           <input
-            id="entry-replies"
+            id="entry-dm-replies"
             type="number"
             min="0"
             inputMode="numeric"
             value={dmReplies}
             onChange={(e) => setDmReplies(e.target.value)}
-            placeholder={previous ? `last week: ${previous.dmReplies}` : '0'}
+            placeholder={previous ? String(previous.dmReplies) : '—'}
           />
           <span className="field__computed">
-            {dmRate !== null ? `${formatPercent(dmRate)} reply rate` : ' '}
+            {dmRate !== null ? `${formatPercent(dmRate)} reply rate` : ' '}
           </span>
-        </div>
-
-        <div className="field">
-          <label className="field__label" htmlFor="entry-activity">
-            Activity level
-          </label>
-          <select
-            id="entry-activity"
-            value={activityLevel}
-            onChange={(e) => setActivityLevel(e.target.value as ActivityLevel)}
-          >
-            <option value="Low">Low</option>
-            <option value="Medium">Medium</option>
-            <option value="High">High</option>
-          </select>
-          <span className="field__computed">
-            {previous && !existing ? `last week: ${previous.activityLevel}` : ' '}
-          </span>
-        </div>
-        {/* Directly after the dropdown, so the level and its reason are entered
-            together rather than in two different parts of the form. */}
-        <div className="field field--activityNote">
-          <label className="field__label" htmlFor="entry-activity-note">
-            Activity note
-            <span className="field__hint">why this level?</span>
-          </label>
-          <input
-            id="entry-activity-note"
-            type="text"
-            value={activityNote}
-            onChange={(e) => setActivityNote(e.target.value)}
-            placeholder="e.g. spike around the Tuesday poll, quiet after that"
-            maxLength={500}
-          />
-          <span className="field__computed">&nbsp;</span>
         </div>
       </div>
-
-      <fieldset className="fieldset">
-        <legend className="fieldset__legend">What the week was about</legend>
-
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label className="field__label" htmlFor="entry-topics">
-            Main topics
-            <span className="field__hint">comma-separated</span>
-          </label>
-          <input
-            id="entry-topics"
-            type="text"
-            value={mainTopics}
-            onChange={(e) => setMainTopics(e.target.value)}
-            placeholder="Scholarships, Visa process, IELTS"
-          />
-          {/* Live chip preview, so the split is visible before saving. */}
-          {topicPreview.length > 0 ? (
-            <div className="tagRow" style={{ marginTop: 6 }}>
-              {topicPreview.map((topic) => (
-                <span className="tag" key={topic}>
-                  {topic}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label className="field__label" htmlFor="entry-questions">
-            Common student questions
-            <span className="field__hint">
-              one per line
-              {questionCount > 0
-                ? ` · ${questionCount} question${questionCount === 1 ? '' : 's'}`
-                : ''}
-            </span>
-          </label>
-          <textarea
-            id="entry-questions"
-            className="textarea--list"
-            value={commonQuestions}
-            onChange={(e) => setCommonQuestions(e.target.value)}
-            placeholder={'Do I need a UK guarantor to book?\nCan I pay rent in instalments?'}
-          />
-        </div>
-
-        <div className="field">
-          <label className="field__label" htmlFor="entry-content-response">
-            Content response
-            <span className="field__hint">how students reacted to what you posted</span>
-          </label>
-          <textarea
-            id="entry-content-response"
-            value={contentResponse}
-            onChange={(e) => setContentResponse(e.target.value)}
-            placeholder="Poll got the most replies; the property carousel was mostly skimmed."
-            maxLength={1000}
-          />
-        </div>
-      </fieldset>
-
-      <fieldset className="fieldset">
-        <legend className="fieldset__legend">
-          Sentiment
-          <span className="field__hint">
-            {sentimentEntered.length > 0
-              ? sentimentSum === 100
-                ? ' · adds up to 100%'
-                : ` · adds up to ${sentimentSum}% — ${
-                    sentimentSum < 100 ? 'short of' : 'over'
-                  } 100`
-              : ' · share of messages, plus up to 3 examples each'}
-          </span>
-        </legend>
-
-        <div className="formGrid" style={{ marginBottom: 12 }}>
-          {SENTIMENT_KEYS.map((key) => (
-            <div className="field" key={key}>
-              <label className="field__label" htmlFor={`entry-sent-${key}`}>
-                {key.charAt(0).toUpperCase() + key.slice(1)}
-                <span className="field__hint">%</span>
-              </label>
-              <input
-                id={`entry-sent-${key}`}
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                inputMode="decimal"
-                value={sentimentPct[key]}
-                onChange={(e) =>
-                  setSentimentPct((current) => ({ ...current, [key]: e.target.value }))
-                }
-                placeholder="—"
-              />
-            </div>
-          ))}
-        </div>
-
-        {SENTIMENT_KEYS.map((key) => (
-          <div className="field" key={`${key}-examples`} style={{ marginBottom: 12 }}>
-            <label className="field__label" htmlFor={`entry-sent-ex-${key}`}>
-              {key.charAt(0).toUpperCase() + key.slice(1)} examples
-              <span className="field__hint">one message per line, up to 3</span>
-            </label>
-            <textarea
-              id={`entry-sent-ex-${key}`}
-              className="textarea--list"
-              value={sentimentExamples[key]}
-              onChange={(e) =>
-                setSentimentExamples((current) => ({ ...current, [key]: e.target.value }))
-              }
-              placeholder={
-                key === 'positive'
-                  ? 'Booked through the link, took ten minutes — thank you!'
-                  : key === 'neutral'
-                    ? 'Is the deadline the 15th or the 20th?'
-                    : 'Still waiting on a reply about my deposit.'
-              }
-            />
-          </div>
-        ))}
-        <p className="chartNote">
-          These are quoted student messages. They are stored on this machine only, in
-          data/weekly-entries.json, and are never sent anywhere.
-        </p>
-      </fieldset>
-
-      <fieldset className="fieldset">
-        <legend className="fieldset__legend">
-          New members by source
-          <span className="field__hint">
-            {sourceEntered.length > 0
-              ? ` · ${sourceTotal} split${
-                  derivedNewMembers !== null ? ` of ${derivedNewMembers} new members` : ''
-                }`
-              : ' · leave blank if you didn’t track it this week'}
-          </span>
-        </legend>
-
-        <div className="formGrid">
-          {MEMBER_SOURCE_KEYS.map((key) => (
-            <div className="field" key={key}>
-              <label className="field__label" htmlFor={`entry-src-${key}`}>
-                {MEMBER_SOURCE_LABELS[key]}
-              </label>
-              <input
-                id={`entry-src-${key}`}
-                type="number"
-                min="0"
-                inputMode="numeric"
-                value={sources[key]}
-                onChange={(e) => setSources((current) => ({ ...current, [key]: e.target.value }))}
-                placeholder="—"
-              />
-            </div>
-          ))}
-        </div>
-
-        {/* A split that disagrees with the week's growth is almost always a typo,
-            and it is far cheaper to catch here than to explain on a chart later. */}
-        {sourceMismatch ? (
-          <p className="formMsg formMsg--err" style={{ marginTop: 10 }} role="status">
-            The split adds up to {sourceTotal}, but this week has {derivedNewMembers} new
-            members. Saving is allowed — the chart will show the split as entered.
-          </p>
-        ) : null}
-      </fieldset>
 
       <div>
         <div className="rowBetween" style={{ marginBottom: 9 }}>
@@ -696,8 +272,8 @@ export function WeeklyEntryForm({
             Polls this week
             <span className="field__hint">
               {pollResponseTotal > 0
-                ? `${pollResponseTotal} responses${pollRate !== null ? ` · ${formatPercent(pollRate)} response rate` : ''}`
-                : 'leave the question blank if you didn’t post one'}
+                ? `${pollResponseTotal} responses${pollRate !== null ? ` · ${formatPercent(pollRate)} of members` : ''}`
+                : 'the export has the question but not the votes — copy the counts from WhatsApp'}
             </span>
           </span>
           <button
@@ -709,105 +285,82 @@ export function WeeklyEntryForm({
           </button>
         </div>
 
-        {polls.map((poll, pollIndex) => {
-          const responses = poll.options.reduce((s, o) => s + (num(o.count) ?? 0), 0);
-          return (
-            <fieldset className="fieldset" key={pollIndex} style={{ marginBottom: 10 }}>
-              <legend className="fieldset__legend">
-                Poll {pollIndex + 1}
-                {responses > 0 ? ` · ${responses} responses` : ''}
-              </legend>
-
-              <div className="field" style={{ marginBottom: 11 }}>
-                <input
-                  type="text"
-                  value={poll.question}
-                  onChange={(e) => updatePoll(pollIndex, { question: e.target.value })}
-                  placeholder="Poll question"
-                  aria-label={`Poll ${pollIndex + 1} question`}
-                />
-              </div>
-
-              {poll.options.map((option, optionIndex) => (
-                <div className="optionRow" key={optionIndex}>
-                  <div className="field optionRow__label">
-                    <input
-                      type="text"
-                      value={option.label}
-                      onChange={(e) =>
-                        updateOption(pollIndex, optionIndex, { label: e.target.value })
-                      }
-                      placeholder={`Option ${optionIndex + 1}`}
-                      aria-label={`Poll ${pollIndex + 1} option ${optionIndex + 1} label`}
-                    />
-                  </div>
-                  <div className="field optionRow__count">
-                    <input
-                      type="number"
-                      min="0"
-                      inputMode="numeric"
-                      value={option.count}
-                      onChange={(e) =>
-                        updateOption(pollIndex, optionIndex, { count: e.target.value })
-                      }
-                      placeholder="votes"
-                      aria-label={`Poll ${pollIndex + 1} option ${optionIndex + 1} count`}
-                    />
-                  </div>
-                  <div className="optionRow__remove">
-                    <button
-                      type="button"
-                      className="iconBtn"
-                      aria-label="Remove option"
-                      onClick={() =>
-                        updatePoll(pollIndex, {
-                          options: poll.options.filter((_, j) => j !== optionIndex),
-                        })
-                      }
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              <div className="row">
+        {polls.map((poll, pollIndex) => (
+          <fieldset className="fieldset" key={pollIndex} style={{ marginBottom: 12 }}>
+            <legend className="fieldset__legend">
+              Poll {pollIndex + 1}
+              {polls.length > 1 ? (
                 <button
                   type="button"
-                  className="btn btn--sm"
-                  onClick={() =>
-                    updatePoll(pollIndex, {
-                      options: [...poll.options, { label: '', count: '' }],
-                    })
-                  }
+                  className="iconBtn"
+                  onClick={() => setPolls((c) => c.filter((_, i) => i !== pollIndex))}
+                  aria-label={`Remove poll ${pollIndex + 1}`}
                 >
-                  + Add option
+                  ×
                 </button>
-                {polls.length > 1 ? (
+              ) : null}
+            </legend>
+
+            <div className="field" style={{ marginBottom: 10 }}>
+              <label className="field__label" htmlFor={`poll-${pollIndex}-q`}>
+                Question
+              </label>
+              <input
+                id={`poll-${pollIndex}-q`}
+                type="text"
+                value={poll.question}
+                onChange={(e) => updatePoll(pollIndex, { question: e.target.value })}
+                placeholder="What stage of your housing search are you at?"
+              />
+            </div>
+
+            {poll.options.map((option, optionIndex) => (
+              <div className="optionRow" key={optionIndex}>
+                <input
+                  className="optionRow__label"
+                  type="text"
+                  value={option.label}
+                  onChange={(e) => updateOption(pollIndex, optionIndex, { label: e.target.value })}
+                  placeholder={`Option ${optionIndex + 1}`}
+                  aria-label={`Poll ${pollIndex + 1} option ${optionIndex + 1} label`}
+                />
+                <input
+                  className="optionRow__count"
+                  type="number"
+                  min="0"
+                  value={option.count}
+                  onChange={(e) => updateOption(pollIndex, optionIndex, { count: e.target.value })}
+                  placeholder="0"
+                  aria-label={`Poll ${pollIndex + 1} option ${optionIndex + 1} responses`}
+                />
+                {poll.options.length > 2 ? (
                   <button
                     type="button"
-                    className="btn btn--sm"
-                    onClick={() => setPolls((c) => c.filter((_, i) => i !== pollIndex))}
+                    className="optionRow__remove"
+                    onClick={() =>
+                      updatePoll(pollIndex, {
+                        options: poll.options.filter((_, j) => j !== optionIndex),
+                      })
+                    }
+                    aria-label="Remove option"
                   >
-                    Remove poll
+                    ×
                   </button>
                 ) : null}
               </div>
-            </fieldset>
-          );
-        })}
-      </div>
+            ))}
 
-      <div className="field field--wide">
-        <label className="field__label" htmlFor="entry-notes">
-          Notes / observations
-        </label>
-        <textarea
-          id="entry-notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="What drove engagement this week? Anything worth repeating or fixing?"
-        />
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() =>
+                updatePoll(pollIndex, { options: [...poll.options, { label: '', count: '' }] })
+              }
+            >
+              + Option
+            </button>
+          </fieldset>
+        ))}
       </div>
 
       <div className="formFoot">
@@ -817,15 +370,11 @@ export function WeeklyEntryForm({
         {message ? (
           <span
             className={`formMsg formMsg--${message.kind === 'ok' ? 'ok' : 'err'}`}
-            role="status"
+            role={message.kind === 'err' ? 'alert' : 'status'}
           >
             {message.text}
           </span>
-        ) : (
-          <span className="muted" style={{ fontSize: 12 }}>
-            Poll response rate, DM reply rate and growth % are calculated — never typed.
-          </span>
-        )}
+        ) : null}
       </div>
     </form>
   );

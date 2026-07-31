@@ -1,7 +1,8 @@
 import { COMMUNITIES, COMMUNITY_SLUGS, groupsOf } from './groups';
-import { getEntries, isShowingDemoEntries } from './store';
+import { getEntries } from './store';
 import { getLeads } from './leads';
 import { getImports, importedWeek, mergedWeek } from './imports';
+import { getChatImports, type GroupChatImport } from './whatsapp/store';
 import {
   buildGroupSeries,
   buildGroupWeekMetrics,
@@ -11,24 +12,28 @@ import {
 } from './metrics';
 import { currentWeekStart, lastNWeeks } from './weeks';
 import type {
+  CommonQuestion,
   CommunitySlug,
   GroupSlug,
-  Lead,
-  MemberSourceKey,
-  NewMembersBySource,
   GroupWeekMetrics,
   ImportedFile,
   ImportedWeek,
+  Lead,
+  MemberSourceKey,
   MetricKey,
+  NewMembersBySource,
   RollupTotals,
+  SentimentBreakdown,
+  SentimentKey,
+  TopicTerm,
   TrendRow,
   WeeklyEntry,
 } from './types';
-import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS } from './types';
+import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS, SENTIMENT_KEYS } from './types';
 
 /**
- * One loader shared by every page: manual weekly entries plus every imported
- * file, assembled into the week being displayed and a trailing trend window.
+ * One loader shared by every page: the three imports plus the two hand-typed
+ * figures, assembled into the week being displayed and a trailing trend window.
  *
  * Loading is deliberately NOT scoped to a community — it always covers every
  * group in every community, and pages slice it. That keeps the merged roll-up a
@@ -40,9 +45,11 @@ export const TREND_WINDOW = 8;
 
 export interface DashboardData {
   entries: WeeklyEntry[];
-  /** Every uploaded file, newest first. */
+  /** Short.io and GA4 files, newest first. */
   imports: ImportedFile[];
-  /** Every hand-entered lead. Personal data — see lib/leads.ts. */
+  /** One chat-derived record per group that has had an export uploaded. */
+  chatImports: GroupChatImport[];
+  /** Hand-entered leads. Personal data — see lib/leads.ts. */
   leads: Lead[];
   /** The week every "this week" figure refers to. */
   displayWeek: string;
@@ -50,33 +57,37 @@ export interface DashboardData {
   weeks: string[];
   /** Current-week metrics for every group in every community. */
   perGroup: GroupWeekMetrics[];
-  /** True when weekly entries are demo seed data rather than saved entries. */
-  demoEntries: boolean;
 }
 
 export async function loadDashboard(): Promise<DashboardData> {
   const thisWeek = currentWeekStart();
-  const [entries, imports, leads] = await Promise.all([
+  const [entries, imports, chatImports, leads] = await Promise.all([
     getEntries(),
     getImports(),
+    getChatImports(),
     getLeads(),
   ]);
 
-  // Show the current week once it has entries; otherwise fall back to the most
-  // recent week that does, so the dashboard is never a grid of dashes.
-  const hasCurrentWeek = entries.some((e) => e.weekStart === thisWeek);
-  const displayWeek = hasCurrentWeek ? thisWeek : latestWeekWithData(entries, thisWeek);
+  // Show the current week once anything covers it; otherwise fall back to the
+  // most recent week that has data, so the dashboard is never a grid of dashes
+  // just because this week's export hasn't been uploaded yet.
+  const hasCurrentWeek =
+    entries.some((e) => e.weekStart === thisWeek) ||
+    chatImports.some((r) => r.weeks.some((w) => w.weekStart === thisWeek));
+  const displayWeek = hasCurrentWeek
+    ? thisWeek
+    : latestWeekWithData(entries, chatImports, thisWeek);
 
   return {
     entries,
     imports,
+    chatImports,
     leads,
     displayWeek,
     weeks: trendWeeks(displayWeek, TREND_WINDOW),
     perGroup: COMMUNITIES.flatMap((c) => c.groups).map((g) =>
-      buildGroupWeekMetrics(g.slug, displayWeek, entries),
+      buildGroupWeekMetrics(g.slug, displayWeek, entries, chatImports),
     ),
-    demoEntries: isShowingDemoEntries(),
   };
 }
 
@@ -97,7 +108,7 @@ export function groupSeries(
   group: GroupSlug,
   weeks: string[] = data.weeks,
 ): GroupWeekMetrics[] {
-  return buildGroupSeries(group, weeks, data.entries);
+  return buildGroupSeries(group, weeks, data.entries, data.chatImports);
 }
 
 /** Weeks offered in the entry form: this week plus the previous 7, newest first. */
@@ -107,32 +118,44 @@ export function entryWeekOptions(count = TREND_WINDOW): string[] {
 
 /* --------------------------------------------------------- roll-ups & series */
 
+/** Sum, staying null when nothing in scope reported the figure at all. */
+function sumOrNull(values: (number | null)[]): number | null {
+  const present = values.filter((v): v is number => v !== null);
+  return present.length === 0 ? null : present.reduce((s, v) => s + v, 0);
+}
+
 /**
  * Pooled totals over any set of groups.
  *
  * Rates are computed from summed numerators and denominators, not by averaging
  * percentages — averaging would weight a 274-member group the same as an
- * 1,130-member one, and would be wrong again when pooling two communities of
- * very different sizes.
+ * 1,130-member one, and would be wrong again when pooling two communities of very
+ * different sizes.
+ *
+ * Every count stays null when no group in scope has an export covering the week,
+ * so an un-imported week reads as unmeasured rather than as a community that lost
+ * all its members.
  */
 export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
-  const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
-  const newMembers = metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0);
+  const members = sumOrNull(metrics.map((m) => m.totalMembers));
   const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
+  // Same rule as the per-group figure: no poll recorded means no rate, not 0%.
+  const anyPoll = metrics.some((m) => m.pollCount > 0);
   const dmsSent = metrics.reduce((s, m) => s + m.dmsSent, 0);
   const dmReplies = metrics.reduce((s, m) => s + m.dmReplies, 0);
 
   return {
     members,
-    newMembers,
-    pollResponseRatePct: pct(responses, members),
+    newMembers: sumOrNull(metrics.map((m) => m.newMembers)),
+    messages: sumOrNull(metrics.map((m) => m.messages)),
+    activeParticipants: sumOrNull(metrics.map((m) => m.activeParticipants)),
+    pollResponseRatePct: anyPoll ? pct(responses, members) : null,
     dmReplyRatePct: pct(dmReplies, dmsSent),
-    groupsWithEntry: metrics.filter((m) => m.entry !== null).length,
+    groupsWithChat: metrics.filter((m) => m.chat !== null).length,
     groupCount: metrics.length,
   };
 }
 
-/** Pooled totals for one community. */
 export function communityTotals(
   data: DashboardData,
   community: CommunitySlug,
@@ -140,12 +163,10 @@ export function communityTotals(
   return rollup(groupsInCommunity(data, community));
 }
 
-/** Pooled totals across every community — the merged view's headline figures. */
 export function mergedTotals(data: DashboardData): RollupTotals {
   return rollup(data.perGroup);
 }
 
-/** Per-community roll-ups, in registry order. */
 export function perCommunityTotals(
   data: DashboardData,
 ): { community: CommunitySlug; totals: RollupTotals }[] {
@@ -155,7 +176,150 @@ export function perCommunityTotals(
   }));
 }
 
-/** Rows shaped for the multi-series charts: one row per week, one key per group. */
+/* ------------------------------------------------- pooled topics & sentiment */
+
+/**
+ * Topics pooled over several groups.
+ *
+ * Message counts add, so a term used in three groups outranks one used heavily in
+ * a single group. That is the right ordering for a combined report: the question
+ * it answers is "what were students talking about across the community", not
+ * "which group talked most".
+ */
+export function pooledTopics(metrics: GroupWeekMetrics[], limit = 12): TopicTerm[] {
+  const totals = new Map<string, TopicTerm>();
+  for (const m of metrics) {
+    for (const topic of m.topics) {
+      const existing = totals.get(topic.term);
+      if (existing) {
+        existing.messages += topic.messages;
+        existing.score += topic.score;
+      } else {
+        totals.set(topic.term, { ...topic });
+      }
+    }
+  }
+  return [...totals.values()]
+    .sort((a, b) => b.score - a.score || b.messages - a.messages)
+    .slice(0, limit);
+}
+
+/** Questions pooled over several groups, most-asked first. */
+export function pooledQuestions(metrics: GroupWeekMetrics[], limit = 8): CommonQuestion[] {
+  const totals = new Map<string, CommonQuestion>();
+  for (const m of metrics) {
+    for (const question of m.questions) {
+      const key = question.text.toLowerCase();
+      const existing = totals.get(key);
+      if (existing) existing.asked += question.asked;
+      else totals.set(key, { ...question });
+    }
+  }
+  return [...totals.values()]
+    .sort((a, b) => b.asked - a.asked || a.text.length - b.text.length)
+    .slice(0, limit);
+}
+
+/**
+ * Sentiment pooled over several groups, weighted by how many messages each
+ * group actually scored.
+ *
+ * Weighting matters: a five-message group at 100% positive must not pull the
+ * combined figure as hard as a five-hundred-message group at 50%. Averaging the
+ * percentages would do exactly that.
+ */
+export function pooledSentiment(metrics: GroupWeekMetrics[]): {
+  sentiment: SentimentBreakdown;
+  scored: number;
+  withSignal: number;
+} {
+  let scored = 0;
+  let withSignal = 0;
+  const counts: Record<SentimentKey, number> = { positive: 0, neutral: 0, negative: 0 };
+  const examples: Record<SentimentKey, string[]> = { positive: [], neutral: [], negative: [] };
+
+  for (const m of metrics) {
+    if (m.sentimentScored === 0) continue;
+    scored += m.sentimentScored;
+    withSignal += m.sentimentWithSignal;
+    for (const key of SENTIMENT_KEYS) {
+      const share = shareOf(m.sentiment, key);
+      if (share !== null) counts[key] += (share / 100) * m.sentimentScored;
+      examples[key].push(...m.sentiment.examples[key]);
+    }
+  }
+
+  if (scored === 0) {
+    return {
+      sentiment: {
+        positivePct: null,
+        neutralPct: null,
+        negativePct: null,
+        examples: { positive: [], neutral: [], negative: [] },
+      },
+      scored: 0,
+      withSignal: 0,
+    };
+  }
+
+  const asPct = (n: number) => Math.round((n / scored) * 1000) / 10;
+  return {
+    sentiment: {
+      positivePct: asPct(counts.positive),
+      neutralPct: asPct(counts.neutral),
+      negativePct: asPct(counts.negative),
+      // Three per sentiment overall, taken across groups in display order.
+      examples: {
+        positive: examples.positive.slice(0, 3),
+        neutral: examples.neutral.slice(0, 3),
+        negative: examples.negative.slice(0, 3),
+      },
+    },
+    scored,
+    withSignal,
+  };
+}
+
+function shareOf(sentiment: SentimentBreakdown, key: SentimentKey): number | null {
+  if (key === 'positive') return sentiment.positivePct;
+  if (key === 'neutral') return sentiment.neutralPct;
+  return sentiment.negativePct;
+}
+
+/* ---------------------------------------------------- join-source aggregation */
+
+/** The two join mechanisms, summed over a set of groups. */
+export function sourceSplitFor(metrics: GroupWeekMetrics[]): NewMembersBySource {
+  const out = {} as NewMembersBySource;
+  for (const key of MEMBER_SOURCE_KEYS) {
+    out[key] = sumOrNull(metrics.map((m) => m.newMembersBySource[key]));
+  }
+  return out;
+}
+
+/** Chart rows for the join-source split: one row per week, one key per mechanism. */
+export function sourceSplitRows(
+  data: DashboardData,
+  groups: GroupSlug[],
+  weeks: string[] = data.weeks,
+): TrendRow[] {
+  const seriesByGroup = groups.map((slug) => groupSeries(data, slug, weeks));
+  return weeks.map((week, index) => {
+    const weekMetrics = seriesByGroup
+      .map((series) => series[index])
+      .filter((m): m is GroupWeekMetrics => m !== undefined);
+    const split = sourceSplitFor(weekMetrics);
+    const row: TrendRow = { week };
+    for (const key of MEMBER_SOURCE_KEYS) row[key] = split[key];
+    return row;
+  });
+}
+
+export const SOURCE_SERIES: { key: MemberSourceKey; label: string }[] =
+  MEMBER_SOURCE_KEYS.map((key) => ({ key, label: MEMBER_SOURCE_LABELS[key] }));
+
+/* --------------------------------------------------------------- trend rows */
+
 export function multiGroupRows(
   data: DashboardData,
   metric: MetricKey,
@@ -163,9 +327,7 @@ export function multiGroupRows(
   weeks: string[] = data.weeks,
 ): TrendRow[] {
   const seriesByGroup = new Map<GroupSlug, GroupWeekMetrics[]>();
-  for (const slug of groups) {
-    seriesByGroup.set(slug, groupSeries(data, slug, weeks));
-  }
+  for (const slug of groups) seriesByGroup.set(slug, groupSeries(data, slug, weeks));
 
   return weeks.map((week, index) => {
     const row: TrendRow = { week };
@@ -177,10 +339,6 @@ export function multiGroupRows(
   });
 }
 
-/**
- * Rows for the merged view's trend chart: one series per community, each the
- * pooled value of its groups for that week.
- */
 export function multiCommunityRows(
   data: DashboardData,
   metric: MetricKey,
@@ -215,27 +373,27 @@ function pooledMetric(metrics: GroupWeekMetrics[], key: MetricKey): number | nul
 
   switch (key) {
     case 'totalMembers':
-    case 'newMembers': {
-      const values = metrics
-        .map((m) => metricOf(m, key))
-        .filter((v): v is number => v !== null);
-      return values.length === 0 ? null : values.reduce((s, v) => s + v, 0);
-    }
+    case 'newMembers':
+    case 'messages':
+    case 'activeParticipants':
+      return sumOrNull(metrics.map((m) => metricOf(m, key)));
     case 'memberGrowthPct': {
       // Growth over the pooled base, not the mean of five growth rates.
-      const withPrev = metrics.filter((m) => m.previousEntry !== null && m.entry !== null);
-      if (withPrev.length === 0) return null;
-      const base = withPrev.reduce((s, m) => s + (m.previousEntry?.totalMembers ?? 0), 0);
-      const added = withPrev.reduce(
-        (s, m) => s + ((m.entry?.totalMembers ?? 0) - (m.previousEntry?.totalMembers ?? 0)),
+      const withBoth = metrics.filter(
+        (m) => m.totalMembers !== null && m.newMembers !== null,
+      );
+      if (withBoth.length === 0) return null;
+      const added = withBoth.reduce((s, m) => s + (m.newMembers ?? 0), 0);
+      const base = withBoth.reduce(
+        (s, m) => s + ((m.totalMembers ?? 0) - (m.newMembers ?? 0)),
         0,
       );
       return pct(added, base);
     }
     case 'pollResponseRatePct': {
+      if (!metrics.some((m) => m.pollCount > 0)) return null;
       const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
-      const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
-      return pct(responses, members);
+      return pct(responses, sumOrNull(metrics.map((m) => m.totalMembers)));
     }
     case 'dmReplyRatePct': {
       const replies = metrics.reduce((s, m) => s + m.dmReplies, 0);
@@ -255,6 +413,10 @@ function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {
       return m.newMembers;
     case 'memberGrowthPct':
       return m.memberGrowthPct;
+    case 'messages':
+      return m.messages;
+    case 'activeParticipants':
+      return m.activeParticipants;
     case 'pollResponseRatePct':
       return m.pollResponseRatePct;
     case 'dmReplyRatePct':
@@ -266,7 +428,6 @@ function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {
 
 /* ------------------------------------------------------- imported figures -- */
 
-/** The imported figures for one community and the displayed week. */
 export function communityImported(
   data: DashboardData,
   community: CommunitySlug,
@@ -275,7 +436,6 @@ export function communityImported(
   return importedWeek(data.imports, community, weekStart);
 }
 
-/** The same, pooled across every community — the merged view. */
 export function mergedImported(
   data: DashboardData,
   weekStart: string = data.displayWeek,
@@ -286,8 +446,8 @@ export function mergedImported(
 /**
  * One imported figure across the trend window, oldest week first.
  *
- * A week with no upload is null, not zero, so a gap in the weekly routine shows
- * as a break in the line rather than as traffic collapsing to nothing.
+ * A week with no upload is null, not zero, so a gap in the routine shows as a
+ * break in the line rather than as traffic collapsing to nothing.
  */
 export function importedSeries(
   data: DashboardData,
@@ -338,66 +498,19 @@ export const IMPORTED_FIGURES: {
   },
 ];
 
-/* --------------------------------------------------- new members by source -- */
-
-/**
- * The source split for a set of groups in one week, summed.
- *
- * A source stays null unless at least one group in scope entered it, so a
- * community where nobody tracked the split shows nothing rather than three zeros.
- */
-export function sourceSplitFor(
-  entries: WeeklyEntry[],
-  groups: GroupSlug[],
-  weekStart: string,
-): NewMembersBySource {
-  const inScope = new Set(groups);
-  const weekEntries = entries.filter(
-    (e) => inScope.has(e.group) && e.weekStart === weekStart,
-  );
-
-  const out = {} as NewMembersBySource;
-  for (const key of MEMBER_SOURCE_KEYS) {
-    const values = weekEntries
-      .map((e) => e.newMembersBySource[key])
-      .filter((v): v is number => v !== null);
-    out[key] = values.length === 0 ? null : values.reduce((sum, v) => sum + v, 0);
-  }
-  return out;
-}
-
-/** Chart rows for the source split over a window: one row per week, one key per source. */
-export function sourceSplitRows(
+/** Pooled member/message series for a set of groups, for the context charts. */
+export function chatSeries(
   data: DashboardData,
   groups: GroupSlug[],
-  weeks: string[] = data.weeks,
-): TrendRow[] {
-  return weeks.map((week) => {
-    const split = sourceSplitFor(data.entries, groups, week);
-    const row: TrendRow = { week };
-    for (const key of MEMBER_SOURCE_KEYS) row[key] = split[key];
-    return row;
-  });
-}
-
-/** Series descriptors for the source-split chart, in display order. */
-export const SOURCE_SERIES: { key: MemberSourceKey; label: string }[] =
-  MEMBER_SOURCE_KEYS.map((key) => ({ key, label: MEMBER_SOURCE_LABELS[key] }));
-
-/**
- * Pooled new members per week for a set of groups — the manual growth series that
- * sits alongside the imported clicks and sessions.
- */
-export function newMembersPerWeek(
-  data: DashboardData,
-  groups: GroupSlug[],
+  metric: MetricKey,
   weeks: string[] = data.weeks,
 ): { week: string; value: number | null }[] {
   const seriesByGroup = groups.map((slug) => groupSeries(data, slug, weeks));
-  return weeks.map((week, index) => {
-    const values = seriesByGroup
-      .map((series) => series[index]?.newMembers)
-      .filter((v): v is number => v !== null && v !== undefined);
-    return { week, value: values.length === 0 ? null : values.reduce((s, v) => s + v, 0) };
-  });
+  return weeks.map((week, index) => ({
+    week,
+    value: pooledMetric(
+      seriesByGroup.map((s) => s[index]).filter((m): m is GroupWeekMetrics => m !== undefined),
+      metric,
+    ),
+  }));
 }

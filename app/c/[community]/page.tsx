@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/PageHeader';
 import { GroupCard } from '@/components/GroupCard';
 import { StatCard, StatCardPercentDelta } from '@/components/StatCard';
-import { DemoNotice } from '@/components/DemoNotice';
 import {
   IMPORTED_FIGURES,
   SOURCE_SERIES,
@@ -13,16 +12,18 @@ import {
   groupsInCommunity,
   importedSeries,
   loadDashboard,
-  newMembersPerWeek,
+  chatSeries,
   sourceSplitFor,
+  pooledQuestions,
   sourceSplitRows,
 } from '@/lib/dashboard';
 import { MemberSourceSplit } from '@/components/MemberSourceSplit';
 import { MultiGroupTrend, SingleTrendChart } from '@/components/charts';
-import { countNoun, getCommunity, getGroup, importsFor } from '@/lib/groups';
+import { countNoun, getCommunity, getGroup, groupsOf, importsFor } from '@/lib/groups';
 import { SOURCE_META } from '@/lib/imports';
 import { ImportPanel } from '@/components/ImportPanel';
 import { ImportedFigures } from '@/components/ImportedFigures';
+import { CommonQuestions } from '@/components/ChatInsights';
 import { formatExact, formatPercent, formatSigned } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
 
@@ -47,8 +48,8 @@ export default async function CommunityOverviewPage({
   const perGroup = groupsInCommunity(data, community.slug);
   const totals = communityTotals(data, community.slug);
 
-  const notes = perGroup.filter((m) => m.notes.trim() !== '');
-  const missing = perGroup.filter((m) => m.entry === null);
+
+  const missing = perGroup.filter((m) => m.chat === null);
   const movers = [...perGroup]
     .filter((m) => m.memberGrowthPct !== null)
     .sort((a, b) => (b.memberGrowthPct ?? 0) - (a.memberGrowthPct ?? 0))
@@ -66,16 +67,27 @@ export default async function CommunityOverviewPage({
     ]),
   );
   const communityImports = data.imports.filter((f) => f.community === community.slug);
+  const questions = pooledQuestions(perGroup);
+
+  // Which groups already have a chat export, for the import panel's per-group row.
+  const chatByGroup = Object.fromEntries(
+    data.chatImports
+      .filter((r) => groupsOf(community.slug).some((g) => g.slug === r.group))
+      .map((r) => [
+        r.group,
+        { filename: r.filename, uploadedAt: r.uploadedAt, weeks: r.weeks.length },
+      ]),
+  );
 
   // Item 4: the hand-entered source split, pooled over this community's groups,
   // plus the growth / clicks / sessions comparison beside it.
   const groupSlugs = perGroup.map((m) => m.group);
-  const split = sourceSplitFor(data.entries, groupSlugs, data.displayWeek);
+  const split = sourceSplitFor(perGroup);
   const splitRows = sourceSplitRows(data, groupSlugs);
   const hasSplitHistory = splitRows.some((row) =>
     SOURCE_SERIES.some((series) => typeof row[series.key] === 'number'),
   );
-  const growthPoints = newMembersPerWeek(data, groupSlugs);
+  const growthPoints = chatSeries(data, groupSlugs, 'newMembers');
   const clickPoints = importedSeries(data, community.slug, (w) => w.shortio?.totalClicks ?? null);
   const sessionPoints = importedSeries(data, community.slug, (w) => w.ga4?.sessions ?? null);
   const hasImportedHistory = [clickPoints, sessionPoints].some((series) =>
@@ -91,7 +103,6 @@ export default async function CommunityOverviewPage({
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
 
         <div className="grid grid--stats">
           <StatCard
@@ -133,6 +144,8 @@ export default async function CommunityOverviewPage({
                 defaultWeek={data.displayWeek}
                 sources={sources}
                 existing={communityImports}
+                groups={groupsOf(community.slug)}
+                chatByGroup={chatByGroup}
               />
             </div>
           </>
@@ -247,59 +260,25 @@ export default async function CommunityOverviewPage({
         </div>
 
         <div className="grid grid--halves" style={{ marginTop: 22 }}>
-          <section className="card">
-            <div className="card__head">
-              <div>
-                <div className="card__title">This week’s notes</div>
-                <div className="card__sub">Straight from the manual weekly entries</div>
-              </div>
-            </div>
-            <div className="card__body">
-              {notes.length === 0 ? (
-                <div className="emptyState">No notes logged for this week yet.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-                  {notes.map((metrics) => {
-                    const group = getGroup(metrics.group);
-                    return (
-                      <div key={metrics.group}>
-                        <div
-                          style={{
-                            fontSize: 12.5,
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                          }}
-                        >
-                          <span aria-hidden="true">{group?.flag}</span>
-                          {group?.label}
-                        </div>
-                        <p style={{ margin: '3px 0 0', fontSize: 13, color: 'var(--ink-secondary)' }}>
-                          {metrics.notes}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <CommonQuestions
+            questions={questions}
+            subtitle={`Across ${community.label}'s ${noun}, week of ${formatWeekRange(data.displayWeek)}`}
+          />
 
           <section className="card">
             <div className="card__head">
               <div>
-                <div className="card__title">Weekly entry status</div>
+                <div className="card__title">Chat export coverage</div>
                 <div className="card__sub">
-                  {totals.groupsWithEntry} of {countNoun(totals.groupCount, noun)} logged for
-                  this week
+                  {totals.groupsWithChat} of {countNoun(totals.groupCount, noun)} have an
+                  export covering this week
                 </div>
               </div>
             </div>
             <div className="card__body">
               {missing.length === 0 ? (
                 <div className="emptyState">
-                  {totals.groupCount === 1 ? 'Logged' : `All ${noun} are logged`} for{' '}
+                  {totals.groupCount === 1 ? 'Covered' : `All ${noun} are covered`} for{' '}
                   {formatWeekRange(data.displayWeek)}.
                 </div>
               ) : (
@@ -316,14 +295,15 @@ export default async function CommunityOverviewPage({
                         <strong>
                           {group?.flag} {group?.label}
                         </strong>{' '}
-                        has no entry for this week — add it →
+                        has no chat export covering this week — import it →
                       </Link>
                     );
                   })}
                 </div>
               )}
               <p className="chartNote">
-                Manual entry takes about a minute each: member count, polls, DMs, activity.
+                One chat export per group backfills every week it covers. Poll counts and DM
+                figures are the only things still typed — no export contains them.
               </p>
             </div>
           </section>

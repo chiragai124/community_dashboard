@@ -2,7 +2,6 @@ import { notFound, redirect } from 'next/navigation';
 import { PageHeader } from '@/components/PageHeader';
 import { ComparisonTable, type ComparisonRow } from '@/components/ComparisonTable';
 import { MultiGroupTrend } from '@/components/charts';
-import { DemoNotice } from '@/components/DemoNotice';
 import { getCommunity, getGroup, singularize } from '@/lib/groups';
 import { groupsInCommunity, loadDashboard, multiGroupRows } from '@/lib/dashboard';
 import { pct } from '@/lib/metrics';
@@ -70,7 +69,6 @@ export default async function CommunityComparisonPage({
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
 
         <h2 className="sectionTitle">
           All metrics · week of {formatWeekRange(data.displayWeek)}

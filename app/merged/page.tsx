@@ -2,7 +2,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { StatCard, StatCardPercentDelta } from '@/components/StatCard';
 import { CommunityRollupCard } from '@/components/CommunityRollupCard';
 import { MultiGroupTrend } from '@/components/charts';
-import { DemoNotice } from '@/components/DemoNotice';
 import { COMMUNITIES, countNoun } from '@/lib/groups';
 import { ImportedFigures } from '@/components/ImportedFigures';
 import {
@@ -32,16 +31,19 @@ export default async function MergedOverviewPage() {
   const totals = mergedTotals(data);
   const byCommunity = perCommunityTotals(data);
 
-  /** Pooled growth for a set of groups: added ÷ last week's pooled base. */
+  /**
+   * Pooled growth for a set of groups: net change ÷ the base it grew from.
+   *
+   * Both figures come from the chat export, so a group with no export contributes
+   * nothing rather than dragging the rate towards zero.
+   */
   const growthFor = (slugs: string[]): number | null => {
-    const metrics = data.perGroup.filter((m) => slugs.includes(m.group));
-    const withPrev = metrics.filter((m) => m.entry !== null && m.previousEntry !== null);
-    if (withPrev.length === 0) return null;
-    const base = withPrev.reduce((s, m) => s + (m.previousEntry?.totalMembers ?? 0), 0);
-    const added = withPrev.reduce(
-      (s, m) => s + ((m.entry?.totalMembers ?? 0) - (m.previousEntry?.totalMembers ?? 0)),
-      0,
+    const metrics = data.perGroup.filter(
+      (m) => slugs.includes(m.group) && m.totalMembers !== null && m.newMembers !== null,
     );
+    if (metrics.length === 0) return null;
+    const added = metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0);
+    const base = metrics.reduce((s, m) => s + ((m.totalMembers ?? 0) - (m.newMembers ?? 0)), 0);
     return pct(added, base);
   };
 
@@ -58,7 +60,7 @@ export default async function MergedOverviewPage() {
 
   const communitySeries = COMMUNITIES.map((c) => ({ key: c.slug, label: c.label }));
   const memberRows = multiCommunityRows(data, 'totalMembers');
-  const biggest = [...byCommunity].sort((a, b) => b.totals.members - a.totals.members)[0];
+  const biggest = [...byCommunity].sort((a, b) => (b.totals.members ?? 0) - (a.totals.members ?? 0))[0];
 
   return (
     <>
@@ -69,7 +71,6 @@ export default async function MergedOverviewPage() {
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
 
         <div className="grid grid--stats">
           <StatCard

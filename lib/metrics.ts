@@ -1,18 +1,39 @@
 import type {
+  ActivityLevel,
   GroupSlug,
   GroupWeekMetrics,
   MetricKey,
+  NewMembersBySource,
   Poll,
   PollHistoryRow,
+  SentimentBreakdown,
   WeeklyEntry,
 } from './types';
 import { getGroup } from './groups';
 import { lastNWeeks, previousWeek } from './weeks';
+import { chatWeekFor, type ChatRecordLike } from './whatsapp/select';
+import type { WhatsAppWeek } from './whatsapp/analyse';
 
 /**
- * Every derived number in the dashboard is computed here. Nothing in this file
- * is hand-entered, and nothing outside it recomputes a rate — so a definition
- * only ever needs changing in one place.
+ * Chat records are typed structurally here, not as the store's concrete type: the
+ * store imports node:fs, and this module is pulled into the client bundle for its
+ * formatters.
+ */
+type GroupChatImport = ChatRecordLike;
+
+/**
+ * Every derived number in the dashboard is computed here.
+ *
+ * TWO INPUTS, and the split between them is the whole design:
+ *
+ *   1. The chat export, analysed into per-week figures — members, growth, join
+ *      mechanism, activity, topics, questions, sentiment.
+ *   2. Weekly entries, which now hold ONLY poll counts and DM figures, because
+ *      WhatsApp exports contain the poll question but never the votes, and a
+ *      group export contains no 1:1 threads at all.
+ *
+ * Nothing here invents a value. A group-week with no chat export gets nulls, not
+ * zeros: "no export covers this week" and "nothing happened" are different facts.
  */
 
 /** Safe percentage. Returns null when the denominator is missing or zero. */
@@ -33,67 +54,91 @@ export function topOption(poll: Poll): { label: string; count: number } {
   return poll.options.reduce((best, o) => (o.count > best.count ? o : best), poll.options[0]);
 }
 
-/**
- * New members for a week: the explicit override if the user typed one,
- * otherwise the delta against the previous week's total.
- */
-export function newMembersFor(
-  entry: WeeklyEntry | null,
-  previous: WeeklyEntry | null,
-): number | null {
-  if (!entry) return null;
-  if (entry.newMembersOverride !== null && entry.newMembersOverride !== undefined) {
-    return entry.newMembersOverride;
-  }
-  if (!previous) return null;
-  return entry.totalMembers - previous.totalMembers;
-}
-
 /* --------------------------------------------------------- the main assembler */
 
-/** Manual entries plus the rates derived from them, for one group and one week. */
+const EMPTY_SENTIMENT: SentimentBreakdown = {
+  positivePct: null,
+  neutralPct: null,
+  negativePct: null,
+  examples: { positive: [], neutral: [], negative: [] },
+};
+
+/** Chat-derived + manual, for one group and one week. */
 export function buildGroupWeekMetrics(
   group: GroupSlug,
   weekStart: string,
   entries: WeeklyEntry[],
+  chatImports: GroupChatImport[],
 ): GroupWeekMetrics {
-  const forGroup = entries.filter((e) => e.group === group);
-  const entry = forGroup.find((e) => e.weekStart === weekStart) ?? null;
-  // The most recent earlier week that actually has an entry — not strictly
-  // weekStart-1, so a skipped week doesn't wipe out the growth figure.
-  const prev =
-    [...forGroup]
-      .filter((e) => e.weekStart < weekStart)
+  const entry = entries.find((e) => e.group === group && e.weekStart === weekStart) ?? null;
+  const chat = chatWeekFor(chatImports, group, weekStart);
+
+  // The most recent earlier week the export covers — not strictly weekStart-1, so
+  // a quiet week with no messages doesn't wipe out the growth figure.
+  const record = chatImports.find((r) => r.group === group);
+  const previousChat =
+    [...(record?.weeks ?? [])]
+      .filter((w) => w.weekStart < weekStart && w.members !== null)
       .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))[0] ?? null;
 
   const responses = entry ? pollResponses(entry.polls) : 0;
-  const newMembers = newMembersFor(entry, prev);
+  const members = chat?.members ?? null;
+  const previousMembers = previousChat?.members ?? null;
 
   return {
     group,
     community: getGroup(group)?.community ?? 'community-1',
     weekStart,
     entry,
-    previousEntry: prev,
+    chat,
 
-    totalMembers: entry?.totalMembers ?? null,
-    newMembers,
+    totalMembers: members,
+    // Net change is always derivable from the export's join/leave lines, even
+    // when an absolute headcount isn't.
+    newMembers: chat?.netChange ?? null,
     memberGrowthPct:
-      entry && prev && prev.totalMembers > 0
-        ? ((entry.totalMembers - prev.totalMembers) / prev.totalMembers) * 100
+      members !== null && previousMembers !== null && previousMembers > 0
+        ? ((members - previousMembers) / previousMembers) * 100
         : null,
+    newMembersBySource: sourceSplitOf(chat),
+
+    messages: chat?.messages ?? null,
+    activeParticipants: chat?.activeParticipants ?? null,
 
     pollResponses: responses,
     pollCount: entry?.polls.length ?? 0,
-    pollResponseRatePct: entry ? pct(responses, entry.totalMembers) : null,
+    // Denominator from the export, numerator from the form — the one place the two
+    // inputs meet. Null unless a poll was actually recorded: with no poll, "0
+    // responses out of 400 members" is not a 0% response rate, it is no rate at
+    // all, and 0.0% on the tile reads as terrible engagement rather than as a
+    // missing entry.
+    pollResponseRatePct:
+      entry && entry.polls.length > 0 ? pct(responses, members) : null,
 
     dmsSent: entry?.dmsSent ?? 0,
     dmReplies: entry?.dmReplies ?? 0,
     dmReplyRatePct: entry ? pct(entry.dmReplies, entry.dmsSent) : null,
 
-    activityLevel: entry?.activityLevel ?? null,
-    notes: entry?.notes ?? '',
+    activityLevel: chat?.activityLevel ?? null,
+    topics: chat?.topics ?? [],
+    questions: chat?.questions ?? [],
+    sentiment: chat
+      ? {
+          positivePct: chat.sentiment.positivePct,
+          neutralPct: chat.sentiment.neutralPct,
+          negativePct: chat.sentiment.negativePct,
+          examples: chat.sentiment.examples,
+        }
+      : EMPTY_SENTIMENT,
+    sentimentScored: chat?.sentiment.scored ?? 0,
+    sentimentWithSignal: chat?.sentiment.withSignal ?? 0,
   };
+}
+
+/** The two join mechanisms WhatsApp distinguishes; null when no export covers the week. */
+function sourceSplitOf(chat: WhatsAppWeek | null): NewMembersBySource {
+  if (!chat) return { inviteLink: null, addedByAdmin: null };
+  return { inviteLink: chat.joinedViaLink, addedByAdmin: chat.addedByAdmin };
 }
 
 /** The same metrics across a window of weeks, oldest first. */
@@ -101,12 +146,17 @@ export function buildGroupSeries(
   group: GroupSlug,
   weeks: string[],
   entries: WeeklyEntry[],
+  chatImports: GroupChatImport[],
 ): GroupWeekMetrics[] {
-  return weeks.map((week) => buildGroupWeekMetrics(group, week, entries));
+  return weeks.map((week) => buildGroupWeekMetrics(group, week, entries, chatImports));
 }
 
 /** Poll history for a group, newest week first, one row per poll. */
-export function buildPollHistory(entries: WeeklyEntry[], group: GroupSlug): PollHistoryRow[] {
+export function buildPollHistory(
+  entries: WeeklyEntry[],
+  group: GroupSlug,
+  chatImports: GroupChatImport[],
+): PollHistoryRow[] {
   return entries
     .filter((e) => e.group === group)
     .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))
@@ -120,19 +170,29 @@ export function buildPollHistory(entries: WeeklyEntry[], group: GroupSlug): Poll
           responses,
           topAnswer: top.label,
           topAnswerCount: top.count,
-          responseRatePct: pct(responses, entry.totalMembers),
+          // Members come from the export for that week, so the rate is null when
+          // no export covers it rather than being computed against a guess.
+          responseRatePct: pct(responses, chatWeekFor(chatImports, group, entry.weekStart)?.members ?? null),
         };
       }),
     );
 }
 
 /**
- * The week to show by default: the most recent week that has at least one
- * entry, falling back to the current week when the store is empty.
+ * The week to show by default: the most recent week any source has data for,
+ * falling back to the current week when nothing is imported at all.
  */
-export function latestWeekWithData(entries: WeeklyEntry[], fallback: string): string {
-  if (entries.length === 0) return fallback;
-  return entries.reduce((latest, e) => (e.weekStart > latest ? e.weekStart : latest), entries[0].weekStart);
+export function latestWeekWithData(
+  entries: WeeklyEntry[],
+  chatImports: GroupChatImport[],
+  fallback: string,
+): string {
+  const weeks: string[] = [
+    ...entries.map((e) => e.weekStart),
+    ...chatImports.flatMap((r) => r.weeks.map((w) => w.weekStart)),
+  ];
+  if (weeks.length === 0) return fallback;
+  return weeks.reduce((latest, w) => (w > latest ? w : latest), weeks[0]);
 }
 
 /** Trailing window of weeks ending at `endWeek`. */
@@ -151,6 +211,8 @@ export interface MetricDef {
   unit: 'count' | 'percent';
   /** How to describe the number in a tooltip or axis. */
   description: string;
+  /** Which input supplies it, so a reader knows what to fix when it's empty. */
+  from: 'chat export' | 'weekly form';
 }
 
 export const METRIC_DEFS: MetricDef[] = [
@@ -159,14 +221,16 @@ export const METRIC_DEFS: MetricDef[] = [
     label: 'Total members',
     shortLabel: 'Members',
     unit: 'count',
-    description: 'Group member count at the end of the week',
+    description: 'Members at the end of the week, counted from the export’s join and leave lines',
+    from: 'chat export',
   },
   {
     key: 'newMembers',
-    label: 'New members',
-    shortLabel: 'New members',
+    label: 'Net new members',
+    shortLabel: 'Net new',
     unit: 'count',
-    description: 'Members added during the week',
+    description: 'Joins minus departures during the week',
+    from: 'chat export',
   },
   {
     key: 'memberGrowthPct',
@@ -174,20 +238,39 @@ export const METRIC_DEFS: MetricDef[] = [
     shortLabel: 'Growth %',
     unit: 'percent',
     description: 'Week-over-week change in member count',
+    from: 'chat export',
+  },
+  {
+    key: 'messages',
+    label: 'Messages',
+    shortLabel: 'Messages',
+    unit: 'count',
+    description: 'Messages sent in the group that week, excluding attachments',
+    from: 'chat export',
+  },
+  {
+    key: 'activeParticipants',
+    label: 'Active members',
+    shortLabel: 'Active',
+    unit: 'count',
+    description: 'People who sent at least one message. Identities are not retained',
+    from: 'chat export',
   },
   {
     key: 'pollResponseRatePct',
     label: 'Poll response rate',
     shortLabel: 'Poll rate',
     unit: 'percent',
-    description: 'Poll responses ÷ member count',
+    description: 'Poll responses ÷ member count. Votes are not in the export, so responses are typed',
+    from: 'weekly form',
   },
   {
     key: 'dmReplyRatePct',
     label: 'DM reply rate',
     shortLabel: 'DM reply',
     unit: 'percent',
-    description: 'Replies received ÷ 1:1 DMs sent',
+    description: 'Replies ÷ 1:1 DMs sent. A group export contains no DMs, so both are typed',
+    from: 'weekly form',
   },
 ];
 
@@ -199,6 +282,10 @@ export function metricValue(m: GroupWeekMetrics, key: MetricKey): number | null 
       return m.newMembers;
     case 'memberGrowthPct':
       return m.memberGrowthPct;
+    case 'messages':
+      return m.messages;
+    case 'activeParticipants':
+      return m.activeParticipants;
     case 'pollResponseRatePct':
       return m.pollResponseRatePct;
     case 'dmReplyRatePct':
@@ -206,6 +293,10 @@ export function metricValue(m: GroupWeekMetrics, key: MetricKey): number | null 
     default:
       return null;
   }
+}
+
+export function activityLabel(level: ActivityLevel | null): string {
+  return level ?? '—';
 }
 
 /* -------------------------------------------------------------- formatting */

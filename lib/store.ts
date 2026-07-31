@@ -1,31 +1,24 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type {
-  GroupSlug,
-  MemberSourceKey,
-  NewMembersBySource,
-  SentimentBreakdown,
-  SentimentKey,
-  WeeklyEntry,
-  WeeklyEntryInput,
-} from './types';
-import { MEMBER_SOURCE_KEYS, SENTIMENT_KEYS } from './types';
+import type { GroupSlug, Poll, WeeklyEntry, WeeklyEntryInput } from './types';
 import { GROUP_SLUGS, isGroupSlug } from './groups';
 import { currentWeekStart, weekStartOf, parseISODate } from './weeks';
-import { demoEntries } from './demo';
 
 /**
- * Persistence for manual weekly entries.
+ * Persistence for the only hand-typed data left: poll counts and DM figures.
+ *
+ * Everything else the dashboard shows is computed from an uploaded export. These
+ * three survive because no export contains them — WhatsApp exports carry a poll's
+ * question but never its votes, and a group export contains no 1:1 threads.
  *
  * Two backends, chosen at runtime:
  *   • Supabase — used when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set.
- *     Talks to the REST API directly (no client library needed). Table schema
- *     is in supabase/schema.sql.
- *   • JSON file — the default. Writes data/weekly-entries.json. Good enough for
- *     one person entering five rows a week, and it needs no setup.
+ *   • JSON file — the default, at data/weekly-entries.json. No setup.
  *
- * Both satisfy the same four functions below, so pages never know which is in
- * play. To add a third backend, implement those four and branch in `usingSupabase`.
+ * THERE IS NO DEMO MODE. It was removed with the manual member counts: member
+ * figures now come from the chat export, so seeded entries could not have
+ * produced a coherent dashboard anyway — and a fabricated number that outlives
+ * the moment it was useful costs more than an empty state does.
  */
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -44,17 +37,6 @@ export function storeBackendLabel(): string {
   return usingSupabase() ? 'Supabase' : 'JSON file (data/weekly-entries.json)';
 }
 
-/**
- * True when the JSON store has never been written. The dashboard seeds itself
- * with demo history in that case so it is never a wall of empty states — the UI
- * labels it as demo data.
- */
-let seededWithDemo = false;
-
-export function isShowingDemoEntries(): boolean {
-  return seededWithDemo;
-}
-
 /* ------------------------------------------------------------------ helpers */
 
 function makeId(group: GroupSlug, weekStart: string): string {
@@ -68,144 +50,48 @@ function sortEntries(entries: WeeklyEntry[]): WeeklyEntry[] {
   });
 }
 
-/**
- * Coerce a stored value into a clean list of short strings.
- *
- * Accepts an array (the normal case) or a single string, which is split on
- * commas and newlines — so a value hand-edited into the JSON file as
- * "Scholarships, Visa process" still loads as two items. Blank entries are
- * dropped and each item is trimmed.
- */
-function toStringList(value: unknown): string[] {
-  const items = Array.isArray(value)
-    ? value.map((v) => String(v ?? ''))
-    : typeof value === 'string'
-      ? value.split(/[,\n]/)
-      : [];
-  return items.map((s) => s.trim()).filter((s) => s !== '');
-}
-
-/**
- * A percentage off the wire, or null. Clamped to 0–100: a negative or >100 share
- * is a typo, and storing it would put a bar outside its own track.
- */
-function toPct(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
+function num(value: unknown): number {
   const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.min(100, Math.max(0, Math.round(n * 10) / 10));
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
 }
 
-/** A non-negative count off the wire, or null. Null and 0 stay distinct. */
-function toCount(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.round(n));
+function normalizePolls(raw: unknown): Poll[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p) => {
+      const poll = p as Record<string, unknown>;
+      const options = Array.isArray(poll.options)
+        ? poll.options
+            .map((o) => {
+              const opt = o as Record<string, unknown>;
+              return { label: String(opt.label ?? '').trim(), count: num(opt.count) };
+            })
+            .filter((o) => o.label !== '')
+        : [];
+      return { question: String(poll.question ?? '').trim(), options };
+    })
+    .filter((p) => p.question !== '');
 }
 
-/**
- * Sentiment off the wire. Absent on every entry saved before this field existed,
- * so it defaults to all-null rather than to zeros — an old week has no sentiment,
- * which is not the same as a week measured at 0% positive.
- */
-function normalizeSentiment(raw: unknown): SentimentBreakdown {
-  const value = (raw ?? {}) as Record<string, unknown>;
-  const rawExamples = (value.examples ?? {}) as Record<string, unknown>;
-
-  const examples = {} as Record<SentimentKey, string[]>;
-  for (const key of SENTIMENT_KEYS) {
-    const list = rawExamples[key];
-    examples[key] = (Array.isArray(list) ? list : typeof list === 'string' ? [list] : [])
-      .map((q) => String(q ?? '').trim())
-      // Quoted student messages: long enough to be useful, capped so a pasted
-      // transcript can't land in the store.
-      .map((q) => q.slice(0, 400))
-      .filter((q) => q !== '')
-      .slice(0, 3);
-  }
-
-  return {
-    positivePct: toPct(value.positivePct ?? value.positive_pct),
-    neutralPct: toPct(value.neutralPct ?? value.neutral_pct),
-    negativePct: toPct(value.negativePct ?? value.negative_pct),
-    examples,
-  };
-}
-
-/** The new-member source split off the wire; all-null when never entered. */
-function normalizeSources(raw: unknown): NewMembersBySource {
-  const value = (raw ?? {}) as Record<string, unknown>;
-  const out = {} as NewMembersBySource;
-  for (const key of MEMBER_SOURCE_KEYS) out[key] = toCount(value[key]);
-  return out;
-}
-
-/** Coerce anything that came off the wire or out of a JSON file into an entry. */
+/** Coerce anything off the wire or out of the JSON file into an entry. */
 function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
   const group = raw.group;
   if (!isGroupSlug(group)) return null;
 
-  const weekStartRaw = typeof raw.weekStart === 'string' ? raw.weekStart : String(raw.week_start ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStartRaw)) return null;
+  const weekRaw =
+    typeof raw.weekStart === 'string' ? raw.weekStart : String(raw.week_start ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekRaw)) return null;
   // Always snap to the Monday, so a Wednesday date can't create a second row.
-  const weekStart = weekStartOf(parseISODate(weekStartRaw));
-
-  const num = (v: unknown, fallback = 0): number => {
-    const n = typeof v === 'number' ? v : Number(v);
-    return Number.isFinite(n) ? n : fallback;
-  };
-
-  const overrideRaw = raw.newMembersOverride ?? raw.new_members_override;
-  const newMembersOverride =
-    overrideRaw === null || overrideRaw === undefined || overrideRaw === ''
-      ? null
-      : num(overrideRaw);
-
-  const pollsRaw = raw.polls;
-  const polls = Array.isArray(pollsRaw)
-    ? pollsRaw
-        .map((p) => {
-          const poll = p as Record<string, unknown>;
-          const options = Array.isArray(poll.options)
-            ? poll.options
-                .map((o) => {
-                  const opt = o as Record<string, unknown>;
-                  return { label: String(opt.label ?? '').trim(), count: num(opt.count) };
-                })
-                .filter((o) => o.label !== '')
-            : [];
-          return { question: String(poll.question ?? '').trim(), options };
-        })
-        .filter((p) => p.question !== '')
-    : [];
-
-  const activityRaw = String(raw.activityLevel ?? raw.activity_level ?? 'Medium');
-  const activityLevel =
-    activityRaw === 'Low' || activityRaw === 'High' || activityRaw === 'Medium'
-      ? activityRaw
-      : 'Medium';
+  const weekStart = weekStartOf(parseISODate(weekRaw));
 
   const now = new Date().toISOString();
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : makeId(group, weekStart),
     group,
     weekStart,
-    totalMembers: Math.max(0, Math.round(num(raw.totalMembers ?? raw.total_members))),
-    newMembersOverride,
-    polls,
-    dmsSent: Math.max(0, Math.round(num(raw.dmsSent ?? raw.dms_sent))),
-    dmReplies: Math.max(0, Math.round(num(raw.dmReplies ?? raw.dm_replies))),
-    activityLevel,
-    // The four qualitative fields were added after the first entries were saved,
-    // so every one of them falls back to empty. An older row stays valid.
-    activityNote: String(raw.activityNote ?? raw.activity_note ?? ''),
-    mainTopics: toStringList(raw.mainTopics ?? raw.main_topics),
-    commonQuestions: toStringList(raw.commonQuestions ?? raw.common_questions),
-    contentResponse: String(raw.contentResponse ?? raw.content_response ?? ''),
-    sentiment: normalizeSentiment(raw.sentiment),
-    newMembersBySource: normalizeSources(raw.newMembersBySource ?? raw.new_members_by_source),
-    notes: String(raw.notes ?? ''),
+    polls: normalizePolls(raw.polls),
+    dmsSent: num(raw.dmsSent ?? raw.dms_sent),
+    dmReplies: num(raw.dmReplies ?? raw.dm_replies),
     createdAt: String(raw.createdAt ?? raw.created_at ?? now),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? now),
   };
@@ -213,46 +99,25 @@ function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
 
 /* ------------------------------------------------------------- JSON backend */
 
-/**
- * Entries that are genuinely saved on disk. Returns null when the store file
- * does not exist yet — distinct from an empty array, which means "the file is
- * there and holds nothing".
- *
- * Writes MUST build on this rather than on readJsonFile(), so demo history can
- * never be persisted and inherit the credibility of real data.
- */
-async function readPersistedJson(): Promise<WeeklyEntry[] | null> {
+async function readJsonFile(): Promise<WeeklyEntry[]> {
   try {
     const text = await fs.readFile(STORE_FILE, 'utf8');
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) return [];
     return sortEntries(
-      parsed.map((row) => normalizeEntry(row as Record<string, unknown>)).filter(
-        (e): e is WeeklyEntry => e !== null,
-      ),
+      parsed
+        .map((row) => normalizeEntry(row as Record<string, unknown>))
+        .filter((e): e is WeeklyEntry => e !== null),
     );
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
-}
-
-/** What pages read: persisted entries, or demo history when nothing is saved. */
-async function readJsonFile(): Promise<WeeklyEntry[]> {
-  const persisted = await readPersistedJson();
-  if (persisted !== null) {
-    seededWithDemo = false;
-    return persisted;
-  }
-  // Nothing saved yet — show demo history rather than five empty pages.
-  seededWithDemo = true;
-  return sortEntries(demoEntries());
 }
 
 async function writeJsonFile(entries: WeeklyEntry[]): Promise<void> {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(STORE_FILE, `${JSON.stringify(sortEntries(entries), null, 2)}\n`, 'utf8');
-  seededWithDemo = false;
 }
 
 /* --------------------------------------------------------- Supabase backend */
@@ -270,26 +135,12 @@ function toSupabaseRow(entry: WeeklyEntry): Record<string, unknown> {
     id: entry.id,
     group_slug: entry.group,
     week_start: entry.weekStart,
-    total_members: entry.totalMembers,
-    new_members_override: entry.newMembersOverride,
     polls: entry.polls,
     dms_sent: entry.dmsSent,
     dm_replies: entry.dmReplies,
-    activity_level: entry.activityLevel,
-    activity_note: entry.activityNote,
-    main_topics: entry.mainTopics,
-    common_questions: entry.commonQuestions,
-    content_response: entry.contentResponse,
-    sentiment: entry.sentiment,
-    new_members_by_source: entry.newMembersBySource,
-    notes: entry.notes,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
   };
-}
-
-function fromSupabaseRow(row: Record<string, unknown>): WeeklyEntry | null {
-  return normalizeEntry({ ...row, group: row.group_slug });
 }
 
 async function readSupabase(): Promise<WeeklyEntry[]> {
@@ -299,8 +150,11 @@ async function readSupabase(): Promise<WeeklyEntry[]> {
     throw new Error(`Supabase read failed (${res.status}): ${await res.text()}`);
   }
   const rows = (await res.json()) as Record<string, unknown>[];
-  seededWithDemo = false;
-  return sortEntries(rows.map(fromSupabaseRow).filter((e): e is WeeklyEntry => e !== null));
+  return sortEntries(
+    rows
+      .map((row) => normalizeEntry({ ...row, group: row.group_slug }))
+      .filter((e): e is WeeklyEntry => e !== null),
+  );
 }
 
 async function upsertSupabase(entry: WeeklyEntry): Promise<void> {
@@ -325,7 +179,6 @@ async function deleteSupabase(id: string): Promise<void> {
 
 /* --------------------------------------------------------------- public API */
 
-/** Every stored entry, oldest week first. */
 export async function getEntries(): Promise<WeeklyEntry[]> {
   return usingSupabase() ? readSupabase() : readJsonFile();
 }
@@ -350,29 +203,13 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
   const normalized = normalizeEntry({
     ...input,
     polls: input.polls ?? [],
-    activityLevel: input.activityLevel ?? 'Medium',
-    activityNote: input.activityNote ?? '',
-    mainTopics: input.mainTopics ?? [],
-    commonQuestions: input.commonQuestions ?? [],
-    contentResponse: input.contentResponse ?? '',
-    sentiment: input.sentiment ?? {},
-    newMembersBySource: input.newMembersBySource ?? {},
-    notes: input.notes ?? '',
   } as Record<string, unknown>);
 
   if (!normalized) {
     throw new Error('Invalid entry: a valid group and week start (YYYY-MM-DD) are required.');
   }
 
-  // Look the existing row up in persisted data only: matching against demo
-  // history would inherit a fabricated createdAt.
-  const persisted = usingSupabase() ? null : await readPersistedJson();
-  const existing = usingSupabase()
-    ? await getEntry(normalized.group, normalized.weekStart)
-    : ((persisted ?? []).find(
-        (e) => e.group === normalized.group && e.weekStart === normalized.weekStart,
-      ) ?? null);
-
+  const existing = await getEntry(normalized.group, normalized.weekStart);
   const now = new Date().toISOString();
   const entry: WeeklyEntry = {
     ...normalized,
@@ -386,12 +223,7 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
     return entry;
   }
 
-  // Deliberately built on persisted data, NOT on readJsonFile(): the first save
-  // must not write demo history to disk. Once saved, the demo banner clears, so
-  // any demo rows persisted here would read as real numbers with nothing marking
-  // them as invented. Trend charts start sparse and fill in week by week —
-  // truthful, and self-correcting.
-  const others = (await readPersistedJson() ?? []).filter(
+  const others = (await readJsonFile()).filter(
     (e) => !(e.group === entry.group && e.weekStart === entry.weekStart),
   );
   await writeJsonFile([...others, entry]);
@@ -403,31 +235,19 @@ export async function deleteEntry(id: string): Promise<boolean> {
     await deleteSupabase(id);
     return true;
   }
-  // Persisted rows only — deleting one demo row would write the other 39 to disk.
-  const current = await readPersistedJson();
-  if (current === null) return false;
+  const current = await readJsonFile();
   const next = current.filter((e) => e.id !== id);
   if (next.length === current.length) return false;
   await writeJsonFile(next);
   return true;
 }
 
-/**
- * Values to pre-fill the weekly form with: last week's member count (so the
- * user only edits the delta) plus their usual DM volume and activity level.
- */
-export async function getPrefill(
-  group: GroupSlug,
-  weekStart: string = currentWeekStart(),
-): Promise<{
-  existing: WeeklyEntry | null;
-  previous: WeeklyEntry | null;
-}> {
-  const entries = await getEntriesForGroup(group);
-  const existing = entries.find((e) => e.weekStart === weekStart) ?? null;
-  const previous =
-    [...entries]
-      .filter((e) => e.weekStart < weekStart)
-      .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))[0] ?? null;
-  return { existing, previous };
+/** Weeks offered in the form: this week plus the previous 7, newest first. */
+export function entryWeeks(count = 8): string[] {
+  const weeks: string[] = [];
+  const current = currentWeekStart();
+  for (let i = 0; i < count; i += 1) {
+    weeks.push(weekStartOf(new Date(parseISODate(current).getTime() - i * 7 * 86400000)));
+  }
+  return weeks;
 }

@@ -1,7 +1,6 @@
 import { notFound } from 'next/navigation';
 import { PageHeader } from '@/components/PageHeader';
 import { TrendsView, type TrendMetric } from '@/components/TrendsView';
-import { DemoNotice } from '@/components/DemoNotice';
 import { getCommunity } from '@/lib/groups';
 import { groupsInCommunity, loadDashboard, multiGroupRows } from '@/lib/dashboard';
 import { METRIC_DEFS } from '@/lib/metrics';
@@ -54,7 +53,6 @@ export default async function CommunityTrendsPage({
       />
 
       <div className="content">
-        <DemoNotice demoEntries={data.demoEntries} />
         <TrendsView
           metrics={metrics}
           rowsByMetric={rowsByMetric}

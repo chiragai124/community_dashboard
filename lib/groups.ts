@@ -118,7 +118,7 @@ export const COMMUNITIES: CommunityConfig[] = [
     groupNoun: 'Groups',
     // Declaring a source only offers the import control. Figures appear for a
     // week once a file has actually been uploaded for it.
-    imports: ['shortio', 'ga4'],
+    imports: ['shortio', 'ga4', 'whatsapp'],
     groups: COMMUNITY_1_GROUPS,
   },
   {
@@ -128,7 +128,7 @@ export const COMMUNITIES: CommunityConfig[] = [
     label: 'Community #2',
     description: '2026 intake cohort, global',
     groupNoun: 'Segments',
-    imports: ['shortio', 'ga4'],
+    imports: ['shortio', 'ga4', 'whatsapp'],
     groups: COMMUNITY_2_GROUPS,
   },
 ];

@@ -1869,3 +1869,11 @@ input[type='file']:hover:not(:disabled) {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* A topic chip carries its own message count, so "guarantor 14" reads as a
+   measurement rather than a label someone chose. */
+.tag__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  font-weight: 600;
+}

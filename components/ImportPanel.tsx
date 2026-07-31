@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import type { CommunitySlug, ImportSource, ImportedFile } from '@/lib/types';
+import type { CommunitySlug, GroupConfig, GroupSlug, ImportSource, ImportedFile } from '@/lib/types';
 import { formatWeekLabel } from '@/lib/weeks';
 import { formatRelativeTime } from '@/lib/metrics';
 
@@ -26,6 +26,10 @@ export interface SourceInfo {
   provides: string;
   /** Click-by-click export steps, shown under the picker. */
   steps: string[];
+  /** Targets one group rather than the community — a chat export is one chat. */
+  perGroup?: boolean;
+  /** Carries its own history, so there is no week to choose. */
+  wholeHistory?: boolean;
 }
 
 export function ImportPanel({
@@ -35,6 +39,8 @@ export function ImportPanel({
   defaultWeek,
   sources,
   existing,
+  groups,
+  chatByGroup,
 }: {
   community: CommunitySlug;
   communityLabel: string;
@@ -43,6 +49,10 @@ export function ImportPanel({
   sources: SourceInfo[];
   /** Everything already stored for this community, any week. */
   existing: ImportedFile[];
+  /** This community's groups, for the chat-export target picker. */
+  groups: GroupConfig[];
+  /** Which groups already have a chat export, and when it was uploaded. */
+  chatByGroup: Record<string, { filename: string; uploadedAt: string; weeks: number } | undefined>;
 }) {
   return (
     <details className="imp">
@@ -65,6 +75,8 @@ export function ImportPanel({
             weekOptions={weekOptions}
             defaultWeek={defaultWeek}
             existing={existing.filter((f) => f.source === source.source)}
+            groups={groups}
+            chatByGroup={chatByGroup}
           />
         ))}
       </div>
@@ -78,22 +90,30 @@ function SourceRow({
   weekOptions,
   defaultWeek,
   existing,
+  groups,
+  chatByGroup,
 }: {
   community: CommunitySlug;
   info: SourceInfo;
   weekOptions: string[];
   defaultWeek: string;
   existing: ImportedFile[];
+  groups: GroupConfig[];
+  chatByGroup: Record<string, { filename: string; uploadedAt: string; weeks: number } | undefined>;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
   const [week, setWeek] = useState(defaultWeek);
+  const [group, setGroup] = useState<GroupSlug>(groups[0]?.slug ?? 'uk');
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [okMessage, setOkMessage] = useState<string | null>(null);
+  // What the chat analysis found — and, importantly, what it could not.
+  const [chatNotes, setChatNotes] = useState<string[] | null>(null);
 
-  const stored = existing.find((f) => f.weekStart === week) ?? null;
+  const storedChat = info.perGroup ? chatByGroup[group] : undefined;
+  const stored = info.perGroup ? null : (existing.find((f) => f.weekStart === week) ?? null);
   const working = busy || isPending;
 
   async function upload(file: File) {
@@ -105,16 +125,25 @@ function SourceRow({
       body.set('file', file);
       body.set('source', info.source);
       body.set('community', community);
-      body.set('weekStart', week);
+      // A chat export is filed against a group and carries its own weeks; the
+      // others are filed against a week and cover the whole community.
+      if (info.perGroup) body.set('group', group);
+      else body.set('weekStart', week);
 
       const res = await fetch('/api/imports', { method: 'POST', body });
       const payload = (await res.json().catch(() => ({}))) as {
         error?: string;
         import?: ImportedFile;
+        chatImport?: { weeks: number; notes: string[] };
       };
       if (!res.ok) throw new Error(payload.error ?? `Upload failed (${res.status})`);
 
-      setOkMessage(`Imported ${file.name}.`);
+      setOkMessage(
+        payload.chatImport
+          ? `Imported ${file.name} — ${payload.chatImport.weeks} week(s) analysed.`
+          : `Imported ${file.name}.`,
+      );
+      setChatNotes(payload.chatImport?.notes ?? null);
       startTransition(() => router.refresh());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
@@ -122,6 +151,28 @@ function SourceRow({
       setBusy(false);
       // Clear the picker so re-selecting the same filename still fires onChange.
       if (fileInput.current) fileInput.current.value = '';
+    }
+  }
+
+  /** A chat import is keyed by group, so its removal is too. */
+  async function removeChat(target: GroupSlug) {
+    setBusy(true);
+    setError(null);
+    setOkMessage(null);
+    try {
+      const res = await fetch(`/api/imports?group=${encodeURIComponent(target)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Could not remove (${res.status})`);
+      }
+      setOkMessage('Removed.');
+      startTransition(() => router.refresh());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove.');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -158,16 +209,35 @@ function SourceRow({
       </div>
 
       <div className="impRow__controls">
-        <label className="field">
-          <span className="field__label">Week</span>
-          <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={working}>
-            {weekOptions.map((option) => (
-              <option key={option} value={option}>
-                {formatWeekLabel(option)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {info.perGroup ? (
+          <label className="field">
+            <span className="field__label">
+              Group <span className="field__hint">one export per group</span>
+            </span>
+            <select
+              value={group}
+              onChange={(e) => setGroup(e.target.value as GroupSlug)}
+              disabled={working}
+            >
+              {groups.map((g) => (
+                <option key={g.slug} value={g.slug}>
+                  {g.flag} {g.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label className="field">
+            <span className="field__label">Week</span>
+            <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={working}>
+              {weekOptions.map((option) => (
+                <option key={option} value={option}>
+                  {formatWeekLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="field">
           <span className="field__label">
@@ -199,7 +269,27 @@ function SourceRow({
         </p>
       ) : null}
 
-      {stored ? (
+      {info.perGroup && storedChat ? (
+        <div className="impRow__stored">
+          <div className="rowBetween">
+            <span>
+              <strong>{storedChat.filename}</strong>{' '}
+              <span className="muted">
+                uploaded {formatRelativeTime(storedChat.uploadedAt)} · {storedChat.weeks} week
+                {storedChat.weeks === 1 ? '' : 's'} covered
+              </span>
+            </span>
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() => void removeChat(group)}
+              disabled={working}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : stored ? (
         <div className="impRow__stored">
           <div className="rowBetween">
             <span>
@@ -229,7 +319,9 @@ function SourceRow({
         </div>
       ) : (
         <p className="impRow__status muted">
-          Nothing imported for this week yet.
+          {info.perGroup
+            ? 'No chat export imported for this group yet.'
+            : 'Nothing imported for this week yet.'}
         </p>
       )}
 

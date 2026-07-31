@@ -2,6 +2,15 @@ import type { ImportSource } from '../types';
 
 export { extractShortio, ImportError } from './shortio';
 export { extractGa4 } from './ga4';
+export { analyseChatExport } from '../whatsapp/analyse';
+export {
+  chatImportFor,
+  chatWeekFor,
+  deleteChatImport,
+  getChatImports,
+  saveChatImport,
+  type GroupChatImport,
+} from '../whatsapp/store';
 export {
   deleteImport,
   findImport,
@@ -13,12 +22,12 @@ export {
 } from './store';
 
 /**
- * The two file-import sources, and how they are described in the UI.
+ * The three file-import sources, and how they are described in the UI.
  *
- * `accept` is what the file picker offers and what the upload route enforces.
- * Short.io exports a multi-sheet workbook; GA4 exports a stacked CSV. Neither is
- * interchangeable, so the wrong file for a source is refused with a message
- * saying which file it wanted rather than parsed into nonsense.
+ * `accept` is what the file picker offers and what the upload route enforces. A
+ * Short.io workbook, a GA4 CSV and a WhatsApp .zip are not interchangeable, so
+ * the wrong file for a source is refused with a message naming the file it wanted
+ * rather than being parsed into nonsense.
  */
 export interface SourceMeta {
   source: ImportSource;
@@ -36,6 +45,17 @@ export interface SourceMeta {
    * describe — the place someone actually is when they need them.
    */
   steps: string[];
+  /**
+   * True when the upload targets one GROUP rather than the whole community. A
+   * chat export is one group's transcript, so it needs a group picker; the
+   * Short.io and GA4 exports are community-wide.
+   */
+  perGroup?: boolean;
+  /**
+   * True when the file carries its own history and so backfills every week it
+   * covers, making a week picker meaningless.
+   */
+  wholeHistory?: boolean;
 }
 
 export const SOURCE_META: Record<ImportSource, SourceMeta> = {
@@ -71,10 +91,30 @@ export const SOURCE_META: Record<ImportSource, SourceMeta> = {
       'If the panel says a metric was not found, add it to the snapshot in GA4 — or tell me which section it lives in and the reader can be taught that layout.',
     ],
   },
+  whatsapp: {
+    source: 'whatsapp',
+    label: 'WhatsApp chat',
+    fileDescription: 'Chat export (.zip), one per group',
+    accept: '.zip',
+    extensions: ['.zip'],
+    provides:
+      'Members and growth, join source, activity, topics, questions and sentiment',
+    perGroup: true,
+    wholeHistory: true,
+    steps: [
+      'Open the group in WhatsApp.',
+      'Tap the group name → scroll down → Export chat.',
+      'Choose WITHOUT MEDIA. Media is not read and only makes the file huge.',
+      'Save or share the .zip to your computer, then upload it here against the right group.',
+      'Upload the FULL history, not a trimmed file: the export has no member list, so an absolute member count is only possible when the file reaches the group\u2019s creation. Without it you still get net change per week.',
+      'One upload backfills every week the export covers, so there is no week to pick — re-upload later and it replaces the whole record for that group.',
+      'Not in the file, and so not computable from it: poll votes (only the question is exported) and any 1:1 DMs (a group export contains none).',
+    ],
+  },
 };
 
-export const IMPORT_SOURCES: ImportSource[] = ['shortio', 'ga4'];
+export const IMPORT_SOURCES: ImportSource[] = ['shortio', 'ga4', 'whatsapp'];
 
 export function isImportSource(value: unknown): value is ImportSource {
-  return value === 'shortio' || value === 'ga4';
+  return value === 'shortio' || value === 'ga4' || value === 'whatsapp';
 }

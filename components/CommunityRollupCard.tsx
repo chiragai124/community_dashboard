@@ -18,8 +18,9 @@ export function CommunityRollupCard({
   totals: RollupTotals;
   growthPct: number | null;
 }) {
-  const direction =
-    totals.newMembers > 0 ? 'up' : totals.newMembers < 0 ? 'down' : 'flat';
+  // Null when no chat export covers the week for any group in this community.
+  const net = totals.newMembers;
+  const direction = net === null ? 'flat' : net > 0 ? 'up' : net < 0 ? 'down' : 'flat';
   const noun = community.groupNoun.toLowerCase();
 
   return (

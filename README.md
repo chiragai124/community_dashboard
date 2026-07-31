@@ -45,67 +45,107 @@ npm run typecheck            # tsc --noEmit
 
 ## The weekly routine
 
-Two files a week, per community, uploaded from the community's own page under
-**Import data**. Nothing is fetched — no credentials, no API keys, no
-`.env.local`.
+Three uploads per community, from the community's own page under **Import data**.
+Nothing is fetched — no credentials, no API keys, no `.env.local`.
 
-| Source | File | What it fills in |
+| Source | File | What it produces |
 |---|---|---|
-| **Short.io** | Statistics workbook, `.xlsx` | Total link clicks, and clicks per link path |
-| **GA4** | Reports snapshot, `.csv` | Active users, new users, sessions |
+| **WhatsApp** | Chat export `.zip`, **one per group** | Members and growth, join source, activity level, topics, questions, sentiment |
+| **GA4** | Reports snapshot `.csv` | Active users, new users, sessions |
+| **Short.io** | Statistics workbook `.xlsx` | Total link clicks, clicks per link path |
 
-`source` + `community` + `week` is the natural key, so **re-uploading the same
-export for the same week replaces it** rather than adding to it. Uploading the
-same file twice never doubles a figure.
+**Only two figures are still typed**: poll responses and 1:1 DM counts. Both are
+absent from every export — WhatsApp carries a poll's *question* but never its
+votes, and a group export contains no DM threads at all. Everything else on every
+page is computed.
 
-The upload itself is not kept: the file is parsed in-process, the handful of
-extracted numbers are written to `data/imports.json`, and the file is discarded.
-Nothing you upload lingers on the server.
+Short.io and GA4 are filed against a **week**. A chat export is filed against a
+**group** and carries its own history, so one upload backfills every week it
+covers; re-uploading replaces that group's record outright.
 
-### Exporting from Short.io
+### Exporting from WhatsApp
 
-1. Sign in at short.io and open **Statistics** in the left sidebar.
-2. Set the date range to the Monday–Sunday week you are reporting on.
-3. Leave the domain filter on the domain holding your tracked links.
-4. Click **Export** (top right) and choose **Excel / .xlsx**.
-5. Upload the workbook unopened and unedited — the sheet names are what the
-   reader matches on.
+1. Open the group in WhatsApp.
+2. Tap the group name → scroll down → **Export chat**.
+3. Choose **Without media** — media is not read and only makes the file huge.
+4. Save the `.zip` to your computer and upload it against the right group.
 
-Only two of the workbook's sheets are read: **General statistic** for the total
-click count, and **Top links** for clicks per link path. OS, Browser, Country,
-City, Social, Referrer, the UTM breakdowns and Click statistics are all ignored.
-If the total is missing or worded differently, the per-link clicks are summed
-instead and the panel says so.
+Upload the **full history**, not a trimmed file. The export contains no member
+list, so an absolute member count is only possible when the file reaches the
+group's creation. Without that you still get net change per week, and the import
+panel says which you got.
 
 ### Exporting from GA4
 
-1. Open analytics.google.com and pick the property.
-2. Go to **Reports → Reports snapshot**.
-3. Set the date range (top right) to the same Monday–Sunday week.
-4. Click the **share** icon → **Download file** → **Download CSV**.
-5. Upload that CSV as-is.
+1. analytics.google.com → pick the property.
+2. **Reports → Reports snapshot**.
+3. Date range (top right) → the Monday–Sunday week.
+4. **Share** icon → **Download file** → **Download CSV**.
 
-A Reports snapshot is not one table — it is several small reports stacked
-together (Active users, Page titles, Traffic sources, City breakdown, daily
-new/returning users), each preceded by `#` comment lines. The reader splits the
-file on those comment blocks and takes **Active users**, **New users**, and
-**Sessions** from the traffic-source section. Sessions specifically prefers a
-section carrying a source/medium or channel dimension over any other section that
-merely has a Sessions column.
+### Exporting from Short.io
 
-Every figure records **which section it came from**, shown next to the stored
-file in the import panel, so a surprising number can be traced without reopening
-the export. GA4 also stamps its date range into the file: if that range doesn't
-match the week you filed it under, the panel says so — the upload still goes
-through, because filing a late export deliberately is legitimate.
+1. short.io → **Statistics**.
+2. Set the date range to the same week.
+3. **Export** → **Excel / .xlsx**. Upload unopened — the sheet names are what the
+   reader matches on.
 
-### WhatsApp chat exports
+## What can and cannot be derived
 
-The per-country `.zip` chat exports are **not** parsed. Read them yourself and
-put what matters into the existing qualitative fields on the weekly form — main
-topics, common student questions, content response, and the activity note. Those
-fields already exist and are shown as an expandable section on each group card and
-detail page.
+Being explicit, because three things people reasonably expect are simply not in
+these files:
+
+| Metric | Source | Notes |
+|---|---|---|
+| Members, growth | WhatsApp | Absolute count needs an export reaching group creation; otherwise net change only |
+| Join source | WhatsApp | **Invite link vs added by an admin.** WhatsApp never records *which* link was clicked, so a Short.io-vs-landing-page split is not recoverable |
+| Activity level | WhatsApp | Message volume against that group's own median week |
+| Topics | WhatsApp | Term and phrase frequency, counted per message. Frequency, not a summary of meaning |
+| Questions | WhatsApp | Messages containing "?", grouped by near-duplicate |
+| Sentiment | WhatsApp | **Keyword-based**, with negation and emoji handling. No model is involved; the panel reports what share of messages contained a word it recognises |
+| Active users, new users, sessions | GA4 | |
+| Link clicks, clicks per path | Short.io | |
+| **Poll response rate** | **typed** | Votes are not in the export |
+| **DM reply rate** | **typed** | A group export contains no DMs |
+| **Leads, and leads by university/country** | **typed** | Nothing in the three files identifies a person, and no file carries a university. A WhatsApp join is a member, not a registration |
+
+## Privacy
+
+The dashboard now processes real chat content, so this matters more than the rest.
+
+**The upload is never written to disk.** Every file — `.zip`, `.csv`, `.xlsx` — is
+parsed in memory and discarded. No transcript is retained.
+
+**What is stored**, in `data/whatsapp.json`:
+
+- Counts: members, joins by mechanism, departures, messages, distinct posters
+- Topic terms with message counts, and question text with how often each was asked
+- Sentiment percentages, and **up to three verbatim example messages per
+  sentiment per week** — real student messages, kept because example quotes were
+  asked for
+- Diagnostics about the file, with names redacted (see below)
+
+**What is not stored**: the transcript, sender names, phone numbers. Distinct
+posters are counted in memory and only the number is kept — deliberately not
+hashed, since a stored hash of a phone number is still a stable identifier.
+
+Diagnostic samples of unrecognised system lines are **name-redacted** before
+storage: `"Priya Sharma changed this group's icon"` is stored as
+`"[name] changed this group's icon"`. Over-redaction is the safe direction and the
+phrasing is what makes the sample useful.
+
+**Keeping it private on your machine:**
+
+- `data/` is gitignored, so nothing can reach the repository by accident.
+- Nothing in the codebase makes an outbound request — no export endpoint, no
+  telemetry, no API calls anywhere.
+- Your exposure is therefore exactly *whoever can read this disk*. Run it locally
+  rather than on a shared host, keep the directory inside an encrypted home folder
+  (FileVault / BitLocker / LUKS), and do not deploy it to a URL without auth in
+  front — it has none.
+- To keep zero verbatim text, delete the sentiment example quotes: they are the
+  only free text stored. Say the word and I will drop them and keep only the
+  percentages.
+- `rm data/whatsapp.json` removes everything chat-derived; re-uploading rebuilds it.
 
 ### Structure — all in one file
 
