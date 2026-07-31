@@ -1,5 +1,6 @@
 import { COMMUNITIES, COMMUNITY_SLUGS, groupsOf } from './groups';
 import { getEntries, isShowingDemoEntries } from './store';
+import { getLeads } from './leads';
 import { getImports, importedWeek, mergedWeek } from './imports';
 import {
   buildGroupSeries,
@@ -12,6 +13,9 @@ import { currentWeekStart, lastNWeeks } from './weeks';
 import type {
   CommunitySlug,
   GroupSlug,
+  Lead,
+  MemberSourceKey,
+  NewMembersBySource,
   GroupWeekMetrics,
   ImportedFile,
   ImportedWeek,
@@ -20,6 +24,7 @@ import type {
   TrendRow,
   WeeklyEntry,
 } from './types';
+import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS } from './types';
 
 /**
  * One loader shared by every page: manual weekly entries plus every imported
@@ -37,6 +42,8 @@ export interface DashboardData {
   entries: WeeklyEntry[];
   /** Every uploaded file, newest first. */
   imports: ImportedFile[];
+  /** Every hand-entered lead. Personal data — see lib/leads.ts. */
+  leads: Lead[];
   /** The week every "this week" figure refers to. */
   displayWeek: string;
   /** Trailing window ending at displayWeek, oldest first. */
@@ -49,7 +56,11 @@ export interface DashboardData {
 
 export async function loadDashboard(): Promise<DashboardData> {
   const thisWeek = currentWeekStart();
-  const [entries, imports] = await Promise.all([getEntries(), getImports()]);
+  const [entries, imports, leads] = await Promise.all([
+    getEntries(),
+    getImports(),
+    getLeads(),
+  ]);
 
   // Show the current week once it has entries; otherwise fall back to the most
   // recent week that does, so the dashboard is never a grid of dashes.
@@ -59,6 +70,7 @@ export async function loadDashboard(): Promise<DashboardData> {
   return {
     entries,
     imports,
+    leads,
     displayWeek,
     weeks: trendWeeks(displayWeek, TREND_WINDOW),
     perGroup: COMMUNITIES.flatMap((c) => c.groups).map((g) =>
@@ -325,3 +337,67 @@ export const IMPORTED_FIGURES: {
     pick: (w) => w.shortio?.totalClicks ?? null,
   },
 ];
+
+/* --------------------------------------------------- new members by source -- */
+
+/**
+ * The source split for a set of groups in one week, summed.
+ *
+ * A source stays null unless at least one group in scope entered it, so a
+ * community where nobody tracked the split shows nothing rather than three zeros.
+ */
+export function sourceSplitFor(
+  entries: WeeklyEntry[],
+  groups: GroupSlug[],
+  weekStart: string,
+): NewMembersBySource {
+  const inScope = new Set(groups);
+  const weekEntries = entries.filter(
+    (e) => inScope.has(e.group) && e.weekStart === weekStart,
+  );
+
+  const out = {} as NewMembersBySource;
+  for (const key of MEMBER_SOURCE_KEYS) {
+    const values = weekEntries
+      .map((e) => e.newMembersBySource[key])
+      .filter((v): v is number => v !== null);
+    out[key] = values.length === 0 ? null : values.reduce((sum, v) => sum + v, 0);
+  }
+  return out;
+}
+
+/** Chart rows for the source split over a window: one row per week, one key per source. */
+export function sourceSplitRows(
+  data: DashboardData,
+  groups: GroupSlug[],
+  weeks: string[] = data.weeks,
+): TrendRow[] {
+  return weeks.map((week) => {
+    const split = sourceSplitFor(data.entries, groups, week);
+    const row: TrendRow = { week };
+    for (const key of MEMBER_SOURCE_KEYS) row[key] = split[key];
+    return row;
+  });
+}
+
+/** Series descriptors for the source-split chart, in display order. */
+export const SOURCE_SERIES: { key: MemberSourceKey; label: string }[] =
+  MEMBER_SOURCE_KEYS.map((key) => ({ key, label: MEMBER_SOURCE_LABELS[key] }));
+
+/**
+ * Pooled new members per week for a set of groups — the manual growth series that
+ * sits alongside the imported clicks and sessions.
+ */
+export function newMembersPerWeek(
+  data: DashboardData,
+  groups: GroupSlug[],
+  weeks: string[] = data.weeks,
+): { week: string; value: number | null }[] {
+  const seriesByGroup = groups.map((slug) => groupSeries(data, slug, weeks));
+  return weeks.map((week, index) => {
+    const values = seriesByGroup
+      .map((series) => series[index]?.newMembers)
+      .filter((v): v is number => v !== null && v !== undefined);
+    return { week, value: values.length === 0 ? null : values.reduce((s, v) => s + v, 0) };
+  });
+}

@@ -1,6 +1,15 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { GroupSlug, WeeklyEntry, WeeklyEntryInput } from './types';
+import type {
+  GroupSlug,
+  MemberSourceKey,
+  NewMembersBySource,
+  SentimentBreakdown,
+  SentimentKey,
+  WeeklyEntry,
+  WeeklyEntryInput,
+} from './types';
+import { MEMBER_SOURCE_KEYS, SENTIMENT_KEYS } from './types';
 import { GROUP_SLUGS, isGroupSlug } from './groups';
 import { currentWeekStart, weekStartOf, parseISODate } from './weeks';
 import { demoEntries } from './demo';
@@ -76,6 +85,62 @@ function toStringList(value: unknown): string[] {
   return items.map((s) => s.trim()).filter((s) => s !== '');
 }
 
+/**
+ * A percentage off the wire, or null. Clamped to 0–100: a negative or >100 share
+ * is a typo, and storing it would put a bar outside its own track.
+ */
+function toPct(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n * 10) / 10));
+}
+
+/** A non-negative count off the wire, or null. Null and 0 stay distinct. */
+function toCount(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.round(n));
+}
+
+/**
+ * Sentiment off the wire. Absent on every entry saved before this field existed,
+ * so it defaults to all-null rather than to zeros — an old week has no sentiment,
+ * which is not the same as a week measured at 0% positive.
+ */
+function normalizeSentiment(raw: unknown): SentimentBreakdown {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const rawExamples = (value.examples ?? {}) as Record<string, unknown>;
+
+  const examples = {} as Record<SentimentKey, string[]>;
+  for (const key of SENTIMENT_KEYS) {
+    const list = rawExamples[key];
+    examples[key] = (Array.isArray(list) ? list : typeof list === 'string' ? [list] : [])
+      .map((q) => String(q ?? '').trim())
+      // Quoted student messages: long enough to be useful, capped so a pasted
+      // transcript can't land in the store.
+      .map((q) => q.slice(0, 400))
+      .filter((q) => q !== '')
+      .slice(0, 3);
+  }
+
+  return {
+    positivePct: toPct(value.positivePct ?? value.positive_pct),
+    neutralPct: toPct(value.neutralPct ?? value.neutral_pct),
+    negativePct: toPct(value.negativePct ?? value.negative_pct),
+    examples,
+  };
+}
+
+/** The new-member source split off the wire; all-null when never entered. */
+function normalizeSources(raw: unknown): NewMembersBySource {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const out = {} as NewMembersBySource;
+  for (const key of MEMBER_SOURCE_KEYS) out[key] = toCount(value[key]);
+  return out;
+}
+
 /** Coerce anything that came off the wire or out of a JSON file into an entry. */
 function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
   const group = raw.group;
@@ -138,6 +203,8 @@ function normalizeEntry(raw: Record<string, unknown>): WeeklyEntry | null {
     mainTopics: toStringList(raw.mainTopics ?? raw.main_topics),
     commonQuestions: toStringList(raw.commonQuestions ?? raw.common_questions),
     contentResponse: String(raw.contentResponse ?? raw.content_response ?? ''),
+    sentiment: normalizeSentiment(raw.sentiment),
+    newMembersBySource: normalizeSources(raw.newMembersBySource ?? raw.new_members_by_source),
     notes: String(raw.notes ?? ''),
     createdAt: String(raw.createdAt ?? raw.created_at ?? now),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? now),
@@ -213,6 +280,8 @@ function toSupabaseRow(entry: WeeklyEntry): Record<string, unknown> {
     main_topics: entry.mainTopics,
     common_questions: entry.commonQuestions,
     content_response: entry.contentResponse,
+    sentiment: entry.sentiment,
+    new_members_by_source: entry.newMembersBySource,
     notes: entry.notes,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
@@ -286,6 +355,8 @@ export async function saveEntry(input: WeeklyEntryInput): Promise<WeeklyEntry> {
     mainTopics: input.mainTopics ?? [],
     commonQuestions: input.commonQuestions ?? [],
     contentResponse: input.contentResponse ?? '',
+    sentiment: input.sentiment ?? {},
+    newMembersBySource: input.newMembersBySource ?? {},
     notes: input.notes ?? '',
   } as Record<string, unknown>);
 

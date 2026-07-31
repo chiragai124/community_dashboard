@@ -6,13 +6,19 @@ import { StatCard, StatCardPercentDelta } from '@/components/StatCard';
 import { DemoNotice } from '@/components/DemoNotice';
 import {
   IMPORTED_FIGURES,
+  SOURCE_SERIES,
   communityImported,
   communityTotals,
   entryWeekOptions,
   groupsInCommunity,
   importedSeries,
   loadDashboard,
+  newMembersPerWeek,
+  sourceSplitFor,
+  sourceSplitRows,
 } from '@/lib/dashboard';
+import { MemberSourceSplit } from '@/components/MemberSourceSplit';
+import { MultiGroupTrend, SingleTrendChart } from '@/components/charts';
 import { countNoun, getCommunity, getGroup, importsFor } from '@/lib/groups';
 import { SOURCE_META } from '@/lib/imports';
 import { ImportPanel } from '@/components/ImportPanel';
@@ -60,6 +66,21 @@ export default async function CommunityOverviewPage({
     ]),
   );
   const communityImports = data.imports.filter((f) => f.community === community.slug);
+
+  // Item 4: the hand-entered source split, pooled over this community's groups,
+  // plus the growth / clicks / sessions comparison beside it.
+  const groupSlugs = perGroup.map((m) => m.group);
+  const split = sourceSplitFor(data.entries, groupSlugs, data.displayWeek);
+  const splitRows = sourceSplitRows(data, groupSlugs);
+  const hasSplitHistory = splitRows.some((row) =>
+    SOURCE_SERIES.some((series) => typeof row[series.key] === 'number'),
+  );
+  const growthPoints = newMembersPerWeek(data, groupSlugs);
+  const clickPoints = importedSeries(data, community.slug, (w) => w.shortio?.totalClicks ?? null);
+  const sessionPoints = importedSeries(data, community.slug, (w) => w.ga4?.sessions ?? null);
+  const hasImportedHistory = [clickPoints, sessionPoints].some((series) =>
+    series.some((p) => p.value !== null),
+  );
 
   return (
     <>
@@ -114,6 +135,105 @@ export default async function CommunityOverviewPage({
                 existing={communityImports}
               />
             </div>
+          </>
+        ) : null}
+
+        <h2 className="sectionTitle">
+          Member growth by source · week of {formatWeekRange(data.displayWeek)}
+        </h2>
+        <MemberSourceSplit
+          split={split}
+          newMembers={totals.newMembers}
+          title="New members by source"
+          subtitle={`Hand-entered, pooled across ${community.label}'s ${noun}`}
+        />
+
+        {hasSplitHistory ? (
+          <section className="card" style={{ marginTop: 14 }}>
+            <div className="card__head">
+              <div>
+                <div className="card__title">
+                  New members by source · last {splitRows.length} weeks
+                </div>
+                <div className="card__sub">
+                  One line per source. Click a source to bring it forward.
+                </div>
+              </div>
+            </div>
+            <div className="card__body">
+              <MultiGroupTrend
+                rows={splitRows}
+                series={SOURCE_SERIES}
+                unit="count"
+                height={300}
+                metricLabel="New members"
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {/* Growth, clicks and sessions as three panels rather than one chart:
+            members, clicks and sessions are different units, so a shared y axis
+            would be meaningless and a second axis would invite reading a crossing
+            point as a relationship. Same x range, independent scales, stated. */}
+        {hasImportedHistory ? (
+          <>
+            <h3 className="sectionTitle">Growth alongside traffic</h3>
+            <div className="grid grid--halves">
+              <section className="card">
+                <div className="card__head">
+                  <div>
+                    <div className="card__title">New members</div>
+                    <div className="card__sub">Manual weekly entries</div>
+                  </div>
+                </div>
+                <div className="card__body">
+                  <SingleTrendChart
+                    points={growthPoints}
+                    seriesLabel="New members"
+                    unit="count"
+                    height={196}
+                  />
+                </div>
+              </section>
+              <section className="card">
+                <div className="card__head">
+                  <div>
+                    <div className="card__title">Link clicks</div>
+                    <div className="card__sub">Short.io imports</div>
+                  </div>
+                </div>
+                <div className="card__body">
+                  <SingleTrendChart
+                    points={clickPoints}
+                    seriesLabel="Clicks"
+                    unit="count"
+                    height={196}
+                  />
+                </div>
+              </section>
+              <section className="card">
+                <div className="card__head">
+                  <div>
+                    <div className="card__title">Sessions</div>
+                    <div className="card__sub">GA4 imports</div>
+                  </div>
+                </div>
+                <div className="card__body">
+                  <SingleTrendChart
+                    points={sessionPoints}
+                    seriesLabel="Sessions"
+                    unit="count"
+                    height={196}
+                  />
+                </div>
+              </section>
+            </div>
+            <p className="chartNote">
+              Three separate scales over the same weeks. Clicks and sessions are traffic, not
+              joins — read these together for context, not as a breakdown of where members
+              came from. The split above is the breakdown, and it is entered by hand.
+            </p>
           </>
         ) : null}
 

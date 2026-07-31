@@ -176,6 +176,38 @@ The weekly entry format is identical for both communities, so there's nothing ne
 to learn: member count, poll question + option counts, DMs sent, DM replies,
 activity level, notes.
 
+## Leads
+
+Leads are hand-entered — there is no registrations import. Each carries a name,
+email, phone, university and country, and is filed against a group and a week.
+`/c/<community>/leads` shows the total, leads this week, distinct universities and
+countries, a leads-per-week line, and breakdowns by university and by country.
+
+Two entry modes, because both are real: one lead at a time for a DM enquiry, or
+**paste a block** straight from a spreadsheet for a batch. The paste is
+tab-separated by default (what a spreadsheet actually puts on the clipboard) and
+falls back to commas. If the first row looks like column names it is used to map
+the columns, so a different column order still lands correctly; without one the
+order is Name, Email, Phone, University, Country, and the app says which it used.
+Re-pasting rows you already saved **updates** them rather than duplicating —
+email is the key, falling back to name plus week.
+
+Blank values are excluded from the breakdowns rather than bucketed as "Unknown",
+and the count of leads missing a university or country is stated beneath each
+chart. A bar labelled Unknown would compete with real universities and read as
+though it were one.
+
+### Personal data
+
+`data/leads.json` holds names, email addresses and phone numbers, and the
+sentiment examples in `data/weekly-entries.json` are quoted student messages.
+Both paths are gitignored, so neither can reach the repository by accident, and
+nothing in the app transmits them anywhere — there is no export endpoint and no
+outbound request. They are as private as the machine running the dashboard.
+
+There is deliberately **no demo mode for leads**: fabricated names and email
+addresses would be indistinguishable from real ones once saved.
+
 ## Where imported figures are stored
 
 `data/imports.json` (gitignored), one small record per uploaded file: the source,
@@ -212,10 +244,14 @@ Typed weekly, per group (about a minute each):
 | **Content response** | free text — how students reacted to what you posted |
 | Notes / observations | free text |
 
-The four qualitative fields are shown as a **collapsed-by-default expandable
-section** on each group's card and detail page, so the card view stays compact.
-The section renders nothing at all when a week has none of them filled in, and the
-activity note also appears next to the level badge in the group header. Unlike the
+**Main topics are always visible** on each group's card and detail page, per
+group — "what was this channel talking about" is the question a card is most often
+opened to answer, and it was invisible while it lived behind a click. The
+remaining qualitative fields (common questions, content response, activity note)
+stay in a **collapsed-by-default expandable section**, so the card view stays
+compact. That section renders nothing at all when a week has none of them filled
+in, and the activity note also appears next to the level badge in the group
+header. Unlike the
 member count, none of these carry over from last week — a stale topic list would
 read as a fresh observation.
 
@@ -226,6 +262,26 @@ hand-entered:
 - New members (delta against last week's count, overridable)
 - Poll response rate % — responses ÷ member count
 - DM reply rate % — replies ÷ DMs sent
+
+**Sentiment** is typed, not computed. Enter the share of messages that were
+positive, neutral and negative, plus up to three example messages for each. The
+percentages are stored exactly as typed and are **never normalised to 100** — if
+they don't add up, the form says so as you type and the panel states how much is
+accounted for. Silently rescaling would present a data-entry slip as a finding.
+
+**New members by source** is also typed, for a reason worth stating: Short.io
+reports clicks and GA4 reports sessions, and **neither is a join**. Apportioning
+growth by click share would invent a number that looks authoritative, so the
+split is three hand-entered counts (WhatsApp link / landing page / organic-other).
+The form checks the split against the week's new-member figure and warns on a
+mismatch; it still saves, and the chart shows the split as entered rather than
+adjusting either figure to fit the other.
+
+Alongside it, the community overview shows new members, link clicks and sessions
+as **three separate panels** over the same weeks. Three panels rather than one
+chart because the units differ: a shared y axis would be meaningless and a second
+axis would invite reading a crossing point as a relationship. They are context,
+not a breakdown — the breakdown is the hand-entered split.
 
 Imported figures are read straight out of the uploaded files and are not derived
 from anything: total link clicks and clicks per link path (Short.io), active
