@@ -29,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # A debugging stub — `await new Promise(() => {})` — once shipped to main
+      # and hung the Sheets integration on every render. It typechecks and
+      # builds cleanly, so only an explicit check catches it.
+      - name: No debug stubs
+        run: npm run check:stubs
+
       - name: Typecheck
         run: npm run typecheck
 

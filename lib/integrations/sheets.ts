@@ -3,7 +3,7 @@ import type { IntegrationState, Registration } from '../types';
 import { googleAuth, hasGoogleCreds } from './google-auth';
 import { demoRegistrations } from '../demo';
 import { REQUIRED_FIELDS, mapColumns, missingColumnsMessage } from './sheet-columns';
-import { GOOGLE_CALL_OPTIONS, errorState } from './shared';
+import { GOOGLE_CALL_OPTIONS, SOURCE_TIMEOUT_MS, errorState } from './shared';
 
 /**
  * Registration data from the Google Sheet.
@@ -74,15 +74,29 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
     };
   }
 
-  await new Promise(() => {}); // EXPERIMENT: hang forever
   try {
     const auth = googleAuth();
     const sheets = google.sheets({ version: 'v4', auth });
     // GOOGLE_CALL_OPTIONS disables googleapis' default retry — see shared.ts.
+    //
+    // The render options matter for speed on a big form-response sheet. The
+    // default FORMATTED_VALUE makes Sheets locale-format every cell server-side
+    // and return it as a string; UNFORMATTED_VALUE skips that work and sends a
+    // smaller payload. Dates then arrive as serial numbers, which parseTimestamp
+    // already understands — and which are unambiguous, unlike a formatted date
+    // where 03/04 could be March or April. `fields` trims the response envelope.
+    const startedAt = Date.now();
     const res = await sheets.spreadsheets.values.get(
-      { spreadsheetId, range },
+      {
+        spreadsheetId,
+        range,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+        dateTimeRenderOption: 'SERIAL_NUMBER',
+        fields: 'values',
+      },
       GOOGLE_CALL_OPTIONS,
     );
+    const elapsedMs = Date.now() - startedAt;
     const rows = res.data.values ?? [];
 
     if (rows.length < 2) {
@@ -137,6 +151,12 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
       // single sheets-fed community, so a sheet with neither column still counts.
       .filter((r) => r.timestamp !== '');
 
+    // A sheet big enough to be near the timeout should say so, with the fix.
+    const slowNote =
+      elapsedMs > SOURCE_TIMEOUT_MS / 2
+        ? ` — slow; narrow it with GOOGLE_SHEETS_RANGE (e.g. 'Responses!A:H')`
+        : '';
+
     // Say plainly which optional columns were not found, so a silently-empty
     // source breakdown is explainable from the status pill alone.
     const absent = (['country', 'utmSource', 'utmCampaign'] as const).filter(
@@ -155,7 +175,10 @@ export async function fetchRegistrations(): Promise<SheetsResult> {
         name: 'sheets',
         label: 'Registrations (Sheets)',
         status: 'live',
-        message: `${registrations.length.toLocaleString('en-US')} registration rows pulled.${note}`,
+        message:
+          `${registrations.length.toLocaleString('en-US')} registration rows pulled ` +
+          `from ${rows.length.toLocaleString('en-US')} sheet rows in ${(elapsedMs / 1000).toFixed(1)}s` +
+          `${slowNote}.${note}`,
         fetchedAt,
       },
     };

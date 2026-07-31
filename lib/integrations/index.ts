@@ -28,6 +28,34 @@ let cache: IntegrationSnapshot | null = null;
 let inFlight: Promise<IntegrationSnapshot> | null = null;
 
 /**
+ * Patches that arrived before there was a cache to put them in. A late result
+ * can land in the gap between a pull resolving and getSnapshot storing it, so
+ * queue rather than drop — dropping is what makes a slow source never recover.
+ */
+let queuedPatches: ((snapshot: IntegrationSnapshot) => void)[] = [];
+
+/** Apply a late result to the cached snapshot, or queue it if there isn't one. */
+function patchCache(mutate: (snapshot: IntegrationSnapshot) => void): void {
+  if (!cache) {
+    queuedPatches.push(mutate);
+    return;
+  }
+  mutate(cache);
+  cache.fetchedAt = new Date().toISOString();
+}
+
+function storeSnapshot(snapshot: IntegrationSnapshot): IntegrationSnapshot {
+  cache = snapshot;
+  if (queuedPatches.length > 0) {
+    const patches = queuedPatches;
+    queuedPatches = [];
+    for (const patch of patches) patch(cache);
+    cache.fetchedAt = new Date().toISOString();
+  }
+  return cache;
+}
+
+/**
  * Run one source with a timeout, converting ANY failure into that source's
  * error state plus an empty result. Never rejects.
  *
@@ -40,10 +68,18 @@ export async function safeSource<T extends { state: IntegrationState }>(
   fetcher: () => Promise<T>,
   /** What this source's payload looks like when the pull produced nothing. */
   emptyResult: Omit<T, 'state'>,
+  /**
+   * Applies a result to a cached snapshot. Called when the source finishes
+   * after we stopped waiting for it, so slowness self-heals by the next load.
+   */
+  applyLate?: (snapshot: IntegrationSnapshot, result: T) => void,
 ): Promise<T> {
   const fetchedAt = new Date().toISOString();
   try {
-    return await withTimeout(fetcher(), label);
+    return await withTimeout(fetcher(), label, (late) => {
+      if (!applyLate) return;
+      patchCache((snapshot) => applyLate(snapshot, late));
+    });
   } catch (err) {
     return { ...emptyResult, state: errorState(name, label, err, fetchedAt) } as T;
   }
@@ -52,9 +88,36 @@ export async function safeSource<T extends { state: IntegrationState }>(
 async function pull(endWeek: string): Promise<IntegrationSnapshot> {
   // All three are independent — run them together, and let each fail alone.
   const [sheets, ga4, shortio] = await Promise.all([
-    safeSource('sheets', 'Registrations (Sheets)', fetchRegistrations, { registrations: [] }),
-    safeSource('ga4', 'Site traffic (GA4)', () => fetchGa4Sessions(endWeek), { rows: [] }),
-    safeSource('shortio', 'Link clicks (Short.io)', fetchShortLinks, { links: [] }),
+    safeSource(
+      'sheets',
+      'Registrations (Sheets)',
+      fetchRegistrations,
+      { registrations: [] },
+      (snapshot, late) => {
+        snapshot.registrations = late.registrations;
+        snapshot.states = replaceState(snapshot.states, late.state);
+      },
+    ),
+    safeSource(
+      'ga4',
+      'Site traffic (GA4)',
+      () => fetchGa4Sessions(endWeek),
+      { rows: [] },
+      (snapshot, late) => {
+        snapshot.ga4 = late.rows;
+        snapshot.states = replaceState(snapshot.states, late.state);
+      },
+    ),
+    safeSource(
+      'shortio',
+      'Link clicks (Short.io)',
+      fetchShortLinks,
+      { links: [] },
+      (snapshot, late) => {
+        snapshot.shortLinks = late.links;
+        snapshot.states = replaceState(snapshot.states, late.state);
+      },
+    ),
   ]);
 
   return {
@@ -64,6 +127,14 @@ async function pull(endWeek: string): Promise<IntegrationSnapshot> {
     states: [sheets.state, ga4.state, shortio.state],
     fetchedAt: new Date().toISOString(),
   };
+}
+
+/** Swap one source's state in place, keeping the display order stable. */
+function replaceState(
+  states: IntegrationState[],
+  next: IntegrationState,
+): IntegrationState[] {
+  return states.map((s) => (s.name === next.name ? next : s));
 }
 
 /** Last-resort snapshot: renders the pages with every source marked failed. */
@@ -96,6 +167,9 @@ function isFresh(snapshot: IntegrationSnapshot | null): snapshot is IntegrationS
 function startPull(endWeek: string): Promise<IntegrationSnapshot> {
   const promise = pull(endWeek)
     .catch((err) => emptySnapshot(err))
+    // Store here, not in the caller: a background revalidation has no caller
+    // waiting on it, and its result must still reach the cache.
+    .then((snapshot) => storeSnapshot(snapshot))
     .finally(() => {
       inFlight = null;
     });
@@ -103,16 +177,29 @@ function startPull(endWeek: string): Promise<IntegrationSnapshot> {
   return promise;
 }
 
-/** Cached snapshot, pulling only when stale. Safe to call from any page. */
+/**
+ * Cached snapshot, pulling only when stale. Safe to call from any page.
+ *
+ * Stale-while-revalidate: once anything is cached, a stale cache is served
+ * immediately and the refresh happens in the background. Only a cold cache waits
+ * on the network, so a source that is merely slow costs one slow page load
+ * rather than every page load.
+ */
 export async function getSnapshot(
   endWeek: string = currentWeekStart(),
 ): Promise<IntegrationSnapshot> {
   try {
     if (isFresh(cache)) return cache;
+
+    if (cache) {
+      // Stale but usable. Kick a refresh and hand back what we have.
+      if (!inFlight) void startPull(endWeek);
+      return cache;
+    }
+
+    // Cold: nothing to show yet, so this one render has to wait.
     // Concurrent page renders share one pull rather than triggering three.
-    const snapshot = await (inFlight ?? startPull(endWeek));
-    cache = snapshot;
-    return snapshot;
+    return await (inFlight ?? startPull(endWeek));
   } catch (err) {
     // Belt and braces: a page must render even if the cache layer itself fails.
     return emptySnapshot(err);
@@ -124,9 +211,7 @@ export async function refreshSnapshot(
   endWeek: string = currentWeekStart(),
 ): Promise<IntegrationSnapshot> {
   try {
-    const snapshot = await startPull(endWeek);
-    cache = snapshot;
-    return snapshot;
+    return await startPull(endWeek);
   } catch (err) {
     return emptySnapshot(err);
   }

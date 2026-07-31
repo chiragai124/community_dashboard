@@ -115,23 +115,42 @@ export function errorState(
 
 /**
  * Resolve `promise`, or reject with a timeout error once SOURCE_TIMEOUT_MS
- * passes. The underlying call is left to finish on its own — we just stop
- * waiting for it, so a slow source can't hold the page open.
+ * passes, so a slow source can't hold the page open.
+ *
+ * Crucially, the underlying request is NOT cancelled: when it finishes after we
+ * stopped waiting, `onLate` receives the result. Without that, a source which is
+ * merely slower than the budget can never succeed — every render abandons it,
+ * nothing is ever cached, and the timeout repeats forever. With it, the first
+ * slow pull still populates the cache and the next load is instant.
  */
-export function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+export function withTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  onLate?: (result: T) => void,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${SOURCE_TIMEOUT_MS}ms`)),
-      SOURCE_TIMEOUT_MS,
-    );
+    let gaveUp = false;
+
+    const timer = setTimeout(() => {
+      gaveUp = true;
+      reject(
+        new Error(
+          `${label} timed out after ${SOURCE_TIMEOUT_MS}ms. The request is still ` +
+            'running; its result will be used on the next load.',
+        ),
+      );
+    }, SOURCE_TIMEOUT_MS);
+
     promise.then(
       (value) => {
         clearTimeout(timer);
-        resolve(value);
+        if (gaveUp) onLate?.(value);
+        else resolve(value);
       },
       (err) => {
         clearTimeout(timer);
-        reject(err);
+        // A late failure has nowhere to go — the render already moved on.
+        if (!gaveUp) reject(err);
       },
     );
   });
