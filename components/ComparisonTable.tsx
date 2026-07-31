@@ -29,11 +29,8 @@ export interface ComparisonRow {
   dmReplies: number;
   dmReplyRatePct: number | null;
   /** Null when the group's community has no Sheets coverage. */
-  totalLeads: number | null;
   /** Null when the group's community has no GA4 coverage. */
-  totalSessions: number | null;
   /** leads ÷ sessions, as a percentage. */
-  leadConversionPct: number | null;
   activityLevel: ActivityLevel | null;
   hasEntry: boolean;
 }
@@ -47,9 +44,6 @@ type SortKey =
   | 'pollResponseRatePct'
   | 'dmsSent'
   | 'dmReplyRatePct'
-  | 'totalLeads'
-  | 'totalSessions'
-  | 'leadConversionPct'
   | 'activityLevel';
 
 const ACTIVITY_RANK: Record<ActivityLevel, number> = { Low: 1, Medium: 2, High: 3 };
@@ -73,14 +67,6 @@ const COLUMNS: {
   },
   { key: 'dmsSent', label: 'DMs', numeric: true, title: '1:1 DMs sent to leads' },
   { key: 'dmReplyRatePct', label: 'DM reply', numeric: true, title: 'Replies ÷ DMs sent' },
-  { key: 'totalLeads', label: 'Leads', numeric: true, title: 'Registrations attributed this week' },
-  { key: 'totalSessions', label: 'Sessions', numeric: true, title: 'GA4 sessions this week' },
-  {
-    key: 'leadConversionPct',
-    label: 'Lead/session',
-    numeric: true,
-    title: 'Leads ÷ GA4 sessions',
-  },
   { key: 'activityLevel', label: 'Activity', numeric: false, title: 'Manually logged activity level' },
 ];
 
@@ -95,15 +81,9 @@ function sortValue(row: ComparisonRow, key: SortKey): number | string {
 export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
   // The community column only earns its space when rows span more than one.
   const showCommunity = new Set(rows.map((r) => r.communityLabel ?? '')).size > 1;
-  // Traffic columns only appear when at least one row is covered by the
-  // automated sources — a manual-only community's table shows none of them.
-  const showTraffic = rows.some((r) => r.totalLeads !== null || r.totalSessions !== null);
-  const TRAFFIC_KEYS: SortKey[] = ['totalLeads', 'totalSessions', 'leadConversionPct'];
-  const columns = COLUMNS.filter((c) => {
-    if (c.key === 'communityLabel') return showCommunity;
-    if (TRAFFIC_KEYS.includes(c.key)) return showTraffic;
-    return true;
-  });
+  const columns = COLUMNS.filter((c) =>
+    c.key === 'communityLabel' ? showCommunity : true,
+  );
   const [sortKey, setSortKey] = useState<SortKey>('totalMembers');
   const [descending, setDescending] = useState(true);
 
@@ -178,14 +158,6 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
                   <td className="num">{formatPercent(row.pollResponseRatePct)}</td>
                   <td className="num">{formatExact(row.dmsSent)}</td>
                   <td className="num">{formatPercent(row.dmReplyRatePct)}</td>
-                  {/* formatExact renders null (no coverage) as "—". */}
-                  {showTraffic ? (
-                    <>
-                      <td className="num">{formatExact(row.totalLeads)}</td>
-                      <td className="num">{formatExact(row.totalSessions)}</td>
-                      <td className="num">{formatPercent(row.leadConversionPct)}</td>
-                    </>
-                  ) : null}
                   <td>
                     <ActivityBadge level={row.activityLevel} />
                   </td>

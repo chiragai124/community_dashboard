@@ -1,6 +1,6 @@
-import { COMMUNITIES, GROUPS, groupsOf, groupsWithSource } from './groups';
+import { COMMUNITIES, COMMUNITY_SLUGS, groupsOf } from './groups';
 import { getEntries, isShowingDemoEntries } from './store';
-import { getSnapshot } from './integrations';
+import { getImports, importedWeek, mergedWeek } from './imports';
 import {
   buildGroupSeries,
   buildGroupWeekMetrics,
@@ -13,7 +13,8 @@ import type {
   CommunitySlug,
   GroupSlug,
   GroupWeekMetrics,
-  IntegrationSnapshot,
+  ImportedFile,
+  ImportedWeek,
   MetricKey,
   RollupTotals,
   TrendRow,
@@ -21,8 +22,8 @@ import type {
 } from './types';
 
 /**
- * One loader shared by every page: manual entries + the three automated pulls,
- * assembled into the week being displayed and a trailing trend window.
+ * One loader shared by every page: manual weekly entries plus every imported
+ * file, assembled into the week being displayed and a trailing trend window.
  *
  * Loading is deliberately NOT scoped to a community — it always covers every
  * group in every community, and pages slice it. That keeps the merged roll-up a
@@ -34,7 +35,8 @@ export const TREND_WINDOW = 8;
 
 export interface DashboardData {
   entries: WeeklyEntry[];
-  snapshot: IntegrationSnapshot;
+  /** Every uploaded file, newest first. */
+  imports: ImportedFile[];
   /** The week every "this week" figure refers to. */
   displayWeek: string;
   /** Trailing window ending at displayWeek, oldest first. */
@@ -47,7 +49,7 @@ export interface DashboardData {
 
 export async function loadDashboard(): Promise<DashboardData> {
   const thisWeek = currentWeekStart();
-  const [entries, snapshot] = await Promise.all([getEntries(), getSnapshot(thisWeek)]);
+  const [entries, imports] = await Promise.all([getEntries(), getImports()]);
 
   // Show the current week once it has entries; otherwise fall back to the most
   // recent week that does, so the dashboard is never a grid of dashes.
@@ -56,11 +58,11 @@ export async function loadDashboard(): Promise<DashboardData> {
 
   return {
     entries,
-    snapshot,
+    imports,
     displayWeek,
     weeks: trendWeeks(displayWeek, TREND_WINDOW),
-    perGroup: GROUPS.map((g) =>
-      buildGroupWeekMetrics(g.slug, displayWeek, entries, snapshot),
+    perGroup: COMMUNITIES.flatMap((c) => c.groups).map((g) =>
+      buildGroupWeekMetrics(g.slug, displayWeek, entries),
     ),
     demoEntries: isShowingDemoEntries(),
   };
@@ -83,7 +85,7 @@ export function groupSeries(
   group: GroupSlug,
   weeks: string[] = data.weeks,
 ): GroupWeekMetrics[] {
-  return buildGroupSeries(group, weeks, data.entries, data.snapshot);
+  return buildGroupSeries(group, weeks, data.entries);
 }
 
 /** Weeks offered in the entry form: this week plus the previous 7, newest first. */
@@ -108,28 +110,11 @@ export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
   const dmsSent = metrics.reduce((s, m) => s + m.dmsSent, 0);
   const dmReplies = metrics.reduce((s, m) => s + m.dmReplies, 0);
 
-  // Leads/sessions are null on groups without declared source coverage. A
-  // roll-up over only-uncovered groups stays null — Community #1's totals must
-  // say "not measured here", never "0 leads".
-  const leadsCovered = metrics.filter((m) => m.totalLeads !== null);
-  const sessionsCovered = metrics.filter((m) => m.totalSessions !== null);
-  const leads =
-    leadsCovered.length > 0
-      ? leadsCovered.reduce((s, m) => s + (m.totalLeads ?? 0), 0)
-      : null;
-  const sessions =
-    sessionsCovered.length > 0
-      ? sessionsCovered.reduce((s, m) => s + (m.totalSessions ?? 0), 0)
-      : null;
-
   return {
     members,
     newMembers,
-    leads,
-    sessions,
     pollResponseRatePct: pct(responses, members),
     dmReplyRatePct: pct(dmReplies, dmsSent),
-    leadConversionPct: leads === null ? null : pct(leads, sessions),
     groupsWithEntry: metrics.filter((m) => m.entry !== null).length,
     groupCount: metrics.length,
   };
@@ -218,9 +203,7 @@ function pooledMetric(metrics: GroupWeekMetrics[], key: MetricKey): number | nul
 
   switch (key) {
     case 'totalMembers':
-    case 'newMembers':
-    case 'totalLeads':
-    case 'totalSessions': {
+    case 'newMembers': {
       const values = metrics
         .map((m) => metricOf(m, key))
         .filter((v): v is number => v !== null);
@@ -264,77 +247,81 @@ function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {
       return m.pollResponseRatePct;
     case 'dmReplyRatePct':
       return m.dmReplyRatePct;
-    case 'totalLeads':
-      return m.totalLeads;
-    case 'totalSessions':
-      return m.totalSessions;
     default:
       return null;
   }
 }
 
-/* -------------------------------------------------------- traffic & funnel */
+/* ------------------------------------------------------- imported figures -- */
 
-export interface TrafficFunnelTotals {
-  /** Lifetime clicks across the scope's tagged Short.io links; null = no coverage. */
-  clicksLifetime: number | null;
-  /** GA4 sessions in the display week; null = no coverage. */
-  sessionsWeek: number | null;
-  /** Sheet registrations in the display week; null = no coverage. */
-  leadsWeek: number | null;
-  /** leads ÷ sessions for the display week, as a percentage. */
-  sessionToLeadPct: number | null;
+/** The imported figures for one community and the displayed week. */
+export function communityImported(
+  data: DashboardData,
+  community: CommunitySlug,
+  weekStart: string = data.displayWeek,
+): ImportedWeek {
+  return importedWeek(data.imports, community, weekStart);
+}
+
+/** The same, pooled across every community — the merged view. */
+export function mergedImported(
+  data: DashboardData,
+  weekStart: string = data.displayWeek,
+): ImportedWeek {
+  return mergedWeek(data.imports, COMMUNITY_SLUGS, weekStart);
 }
 
 /**
- * The combined traffic/funnel layer over the automated sources: Short.io clicks
- * → GA4 sessions → sheet registrations. Scoped to one community, or — for the
- * merged view — to every community that declares each source. Since coverage
- * comes from config, a future community's sources join this roll-up by
- * declaration alone.
+ * One imported figure across the trend window, oldest week first.
+ *
+ * A week with no upload is null, not zero, so a gap in the weekly routine shows
+ * as a break in the line rather than as traffic collapsing to nothing.
  */
-export function trafficFunnel(
+export function importedSeries(
   data: DashboardData,
-  community?: CommunitySlug,
-): TrafficFunnelTotals {
-  const inScope = (slug: CommunitySlug) => community === undefined || slug === community;
-
-  const shortioGroups = groupsWithSource('shortio').filter((g) => inScope(g.community));
-  const tags = new Set(shortioGroups.map((g) => g.shortioTag.toLowerCase()));
-  const clicksLifetime =
-    shortioGroups.length > 0
-      ? data.snapshot.shortLinks
-          .filter((link) => tags.has(link.tag.trim().toLowerCase()))
-          .reduce((sum, link) => sum + link.clicks, 0)
-      : null;
-
-  const scoped = data.perGroup.filter((m) => inScope(m.community));
-  const sessionsCovered = scoped.filter((m) => m.totalSessions !== null);
-  const leadsCovered = scoped.filter((m) => m.totalLeads !== null);
-
-  const sessionsWeek =
-    sessionsCovered.length > 0
-      ? sessionsCovered.reduce((s, m) => s + (m.totalSessions ?? 0), 0)
-      : null;
-  const leadsWeek =
-    leadsCovered.length > 0
-      ? leadsCovered.reduce((s, m) => s + (m.totalLeads ?? 0), 0)
-      : null;
-
-  return {
-    clicksLifetime,
-    sessionsWeek,
-    leadsWeek,
-    sessionToLeadPct: leadsWeek === null ? null : pct(leadsWeek, sessionsWeek),
-  };
-}
-
-/** Daily GA4 sessions rolled up per week, for one group. */
-export function weeklySessions(
-  data: DashboardData,
-  group: GroupSlug,
+  community: CommunitySlug | 'merged',
+  pick: (week: ImportedWeek) => number | null,
   weeks: string[] = data.weeks,
 ): { week: string; value: number | null }[] {
-  const series = groupSeries(data, group, weeks);
-  return series.map((m) => ({ week: m.weekStart, value: m.totalSessions }));
+  return weeks.map((week) => ({
+    week,
+    value: pick(
+      community === 'merged'
+        ? mergedWeek(data.imports, COMMUNITY_SLUGS, week)
+        : importedWeek(data.imports, community, week),
+    ),
+  }));
 }
+
+/** The four imported headline figures, in display order. */
+export const IMPORTED_FIGURES: {
+  key: string;
+  label: string;
+  hint: string;
+  pick: (week: ImportedWeek) => number | null;
+}[] = [
+  {
+    key: 'activeUsers',
+    label: 'Active users',
+    hint: 'GA4 · this week',
+    pick: (w) => w.ga4?.activeUsers ?? null,
+  },
+  {
+    key: 'newUsers',
+    label: 'New users',
+    hint: 'GA4 · this week',
+    pick: (w) => w.ga4?.newUsers ?? null,
+  },
+  {
+    key: 'sessions',
+    label: 'Sessions',
+    hint: 'GA4 · source/medium',
+    pick: (w) => w.ga4?.sessions ?? null,
+  },
+  {
+    key: 'clicks',
+    label: 'Link clicks',
+    hint: 'Short.io · this week',
+    pick: (w) => w.shortio?.totalClicks ?? null,
+  },
+];

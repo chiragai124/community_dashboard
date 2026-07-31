@@ -32,11 +32,7 @@ export default async function MergedComparisonPage() {
       dmsSent: metrics.dmsSent,
       dmReplies: metrics.dmReplies,
       dmReplyRatePct: metrics.dmReplyRatePct,
-      totalLeads: metrics.totalLeads,
-      totalSessions: metrics.totalSessions,
       // Null leads = the group's community isn't covered by the sources.
-      leadConversionPct:
-        metrics.totalLeads === null ? null : pct(metrics.totalLeads, metrics.totalSessions),
       activityLevel: metrics.activityLevel,
       hasEntry: metrics.entry !== null,
     };
@@ -50,12 +46,10 @@ export default async function MergedComparisonPage() {
         eyebrow="Merged · All communities"
         title="All groups"
         weekStart={data.displayWeek}
-        states={data.snapshot.states}
-        fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice demoEntries={data.demoEntries} />
 
         <h2 className="sectionTitle">
           Every group and segment · week of {formatWeekRange(data.displayWeek)}
@@ -90,8 +84,6 @@ export default async function MergedComparisonPage() {
                       <td className="num">{formatExact(totals.newMembers)}</td>
                       <td className="num">{formatPercent(totals.pollResponseRatePct)}</td>
                       <td className="num">{formatPercent(totals.dmReplyRatePct)}</td>
-                      <td className="num">{formatExact(totals.leads)}</td>
-                      <td className="num">{formatExact(totals.sessions)}</td>
                       <td className="num">{totals.groupCount}</td>
                     </tr>
                   );

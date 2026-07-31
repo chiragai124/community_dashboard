@@ -1,20 +1,18 @@
-import type {
-  Ga4SessionRow,
-  Registration,
-  ShortLinkClicks,
-  WeeklyEntry,
-} from './types';
-import { GROUPS, LEAD_SOURCE_BUCKETS, groupsWithSource } from './groups';
-import { addWeeks, currentWeekStart, lastNWeeks, parseISODate, toISODate } from './weeks';
+import type { WeeklyEntry } from './types';
+import { GROUPS } from './groups';
+import { addWeeks, currentWeekStart, lastNWeeks, parseISODate } from './weeks';
 
 /**
- * Deterministic demo data.
+ * Deterministic demo weekly entries.
  *
- * The dashboard is useful the moment it boots, with no Google or Short.io
- * credentials and no weekly entries typed in yet. Everything produced here is
- * flagged as demo in the UI (a "Demo data" pill on every affected surface) and
- * is replaced the instant real credentials or a real entry arrive. It is never
- * written to disk — see lib/store.ts.
+ * The dashboard is legible the moment it boots, before any week has been typed
+ * in. Everything produced here is flagged as demo in the UI and is replaced by
+ * the first real save. It is never written to disk — see lib/store.ts.
+ *
+ * Imported figures (Short.io clicks, GA4 users and sessions) have NO demo
+ * equivalent on purpose: an invented traffic number that later turns out to have
+ * been fabricated costs more trust than an empty card does patience. Those cards
+ * stay empty until a real file is uploaded.
  *
  * Everything is driven off each group's `demo` profile in lib/groups.ts, so a
  * new group or community gets demo data automatically.
@@ -141,24 +139,7 @@ const NOTE_TEMPLATES = [
   'Slower start, picked up after the Thursday property drop.',
 ];
 
-const FIRST_NAMES = [
-  'Aarav', 'Priya', 'Wei', 'Sofia', 'Liam', 'Ananya', 'Noah', 'Mei', 'Omar', 'Elena',
-  'Rahul', 'Chloe', 'Yusuf', 'Isabella', 'Arjun', 'Hannah', 'Diego', 'Nour', 'Ethan', 'Zara',
-];
-const LAST_NAMES = [
-  'Sharma', 'Patel', 'Chen', 'Garcia', 'Murphy', 'Rao', 'Smith', 'Wang', 'Hassan', 'Rossi',
-  'Kumar', 'Dubois', 'Ali', 'Silva', 'Nguyen', 'Kaur', 'Okafor', 'Weber', 'Novak', 'Costa',
-];
-
 /** UTM source/medium pairs matching the four tracked lead sources. */
-const SOURCE_UTMS: { source: string; medium: string }[] = [
-  { source: 'instagram', medium: 'social' },
-  { source: 'refer_a_friend', medium: 'referral' },
-  { source: 'scholarship_team', medium: 'partner' },
-  { source: 'community_banner', medium: 'banner' },
-  { source: 'whatsapp', medium: 'community' },
-];
-
 /* ------------------------------------------------------------ weekly entries */
 
 /** Eight weeks of manual entries across every group in every community. */
@@ -237,115 +218,6 @@ export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[]
   }
 
   return entries;
-}
-
-/* --------------------------------------------------------- automated sources */
-
-/** Registration rows as if pulled from the Google Sheet. */
-export function demoRegistrations(endWeek: string = currentWeekStart()): Registration[] {
-  const weeks = lastNWeeks(DEMO_WEEKS, endWeek);
-  const rows: Registration[] = [];
-
-  // Demo mirrors reality: only communities that declare Sheets coverage get
-  // registration rows, so Community #1 shows no fabricated signups either.
-  for (const group of groupsWithSource('sheets')) {
-    const profile = group.demo;
-    const rand = rng(hash(`regs:${group.slug}`));
-
-    weeks.forEach((weekStart, weekIndex) => {
-      // Leads trend up gently over the window.
-      const base = profile.leads * (0.78 + weekIndex * 0.045);
-      const count = Math.max(3, Math.round(base * (0.7 + rand() * 0.7)));
-
-      for (let i = 0; i < count; i += 1) {
-        const utm = pick(rand, SOURCE_UTMS);
-        const dayOffset = randInt(rand, 0, 6);
-        const hour = randInt(rand, 7, 22);
-        const day = new Date(parseISODate(weekStart).getTime() + dayOffset * 86400000);
-        const timestamp = new Date(
-          Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), hour, randInt(rand, 0, 59)),
-        ).toISOString();
-        const first = pick(rand, FIRST_NAMES);
-        const last = pick(rand, LAST_NAMES);
-
-        rows.push({
-          name: `${first} ${last}`,
-          email: `${first.toLowerCase()}.${last.toLowerCase()}${randInt(rand, 10, 99)}@example.com`,
-          // Groups with no country list are global — leave country blank so they
-          // are attributed by campaign, exactly as the real pull would be.
-          country: group.sheetCountry[0] ?? '',
-          university: pick(rand, profile.universities),
-          utmSource: utm.source,
-          utmMedium: utm.medium,
-          utmCampaign: group.utmCampaigns[0],
-          timestamp,
-        });
-      }
-    });
-  }
-
-  return rows;
-}
-
-/** Daily GA4 session rows as if pulled from the Data API. */
-export function demoGa4(endWeek: string = currentWeekStart()): Ga4SessionRow[] {
-  const weeks = lastNWeeks(DEMO_WEEKS, endWeek);
-  const rows: Ga4SessionRow[] = [];
-
-  for (const group of groupsWithSource('ga4')) {
-    const profile = group.demo;
-    const rand = rng(hash(`ga4:${group.slug}`));
-
-    weeks.forEach((weekStart, weekIndex) => {
-      const weeklyBase = profile.leads * 14 * (0.8 + weekIndex * 0.04);
-      for (let day = 0; day < 7; day += 1) {
-        const date = toISODate(new Date(parseISODate(weekStart).getTime() + day * 86400000));
-        // Weekends dip.
-        const dayFactor = day >= 5 ? 0.62 : 1.05;
-        const sessions = Math.max(1, Math.round((weeklyBase / 7) * dayFactor * (0.7 + rand() * 0.6)));
-        const utm = pick(rand, SOURCE_UTMS);
-        rows.push({
-          date,
-          campaign: group.utmCampaigns[0],
-          source: utm.source,
-          medium: utm.medium,
-          sessions,
-        });
-      }
-    });
-  }
-
-  return rows;
-}
-
-/** Short.io tracked-link click counts, one link per lead source per group. */
-export function demoShortLinks(): ShortLinkClicks[] {
-  const links: ShortLinkClicks[] = [];
-
-  for (const group of groupsWithSource('shortio')) {
-    const profile = group.demo;
-    const rand = rng(hash(`shortio:${group.slug}`));
-
-    for (const bucket of LEAD_SOURCE_BUCKETS) {
-      // Clicks scale with the group's lead volume; conversion lands ~8–22%.
-      const leadsFromBucket = profile.leads * DEMO_WEEKS * (0.15 + rand() * 0.3);
-      const clicks = Math.round(leadsFromBucket / (0.08 + rand() * 0.14));
-      links.push({
-        id: `${group.shortioTag}-${bucket.label.toLowerCase().replace(/\s+/g, '-')}`,
-        title: `${group.label} — ${bucket.label}`,
-        tag: group.shortioTag,
-        clicks,
-        source: bucket.label,
-      });
-    }
-  }
-
-  return links;
-}
-
-/** The week the demo data ends on, used to align default views. */
-export function demoEndWeek(): string {
-  return currentWeekStart();
 }
 
 export { addWeeks };

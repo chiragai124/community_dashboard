@@ -4,9 +4,19 @@ import { PageHeader } from '@/components/PageHeader';
 import { GroupCard } from '@/components/GroupCard';
 import { StatCard, StatCardPercentDelta } from '@/components/StatCard';
 import { DemoNotice } from '@/components/DemoNotice';
-import { communityTotals, groupsInCommunity, loadDashboard, trafficFunnel } from '@/lib/dashboard';
-import { countNoun, getCommunity, getGroup, integrationsFor } from '@/lib/groups';
-import { TrafficFunnel } from '@/components/TrafficFunnel';
+import {
+  IMPORTED_FIGURES,
+  communityImported,
+  communityTotals,
+  entryWeekOptions,
+  groupsInCommunity,
+  importedSeries,
+  loadDashboard,
+} from '@/lib/dashboard';
+import { countNoun, getCommunity, getGroup, importsFor } from '@/lib/groups';
+import { SOURCE_META } from '@/lib/imports';
+import { ImportPanel } from '@/components/ImportPanel';
+import { ImportedFigures } from '@/components/ImportedFigures';
 import { formatExact, formatPercent, formatSigned } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
 
@@ -39,10 +49,17 @@ export default async function CommunityOverviewPage({
     .slice(0, 3);
 
   const noun = community.groupNoun.toLowerCase();
-  // Whether any automated source represents this community. Manual-only
-  // communities show no pulled figures, no source pills, no refresh button.
-  const hasSources = integrationsFor(community.slug).length > 0;
-  const funnel = hasSources ? trafficFunnel(data, community.slug) : null;
+
+  // Imported figures are community-level: one Short.io and one GA4 file a week.
+  const sources = importsFor(community.slug).map((source) => SOURCE_META[source]);
+  const imported = communityImported(data, community.slug);
+  const importSeries = Object.fromEntries(
+    IMPORTED_FIGURES.map((figure) => [
+      figure.key,
+      importedSeries(data, community.slug, figure.pick),
+    ]),
+  );
+  const communityImports = data.imports.filter((f) => f.community === community.slug);
 
   return (
     <>
@@ -50,16 +67,10 @@ export default async function CommunityOverviewPage({
         eyebrow={`${community.label} · Overview`}
         title={community.name}
         weekStart={data.displayWeek}
-        states={hasSources ? data.snapshot.states : []}
-        fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice
-          snapshot={data.snapshot}
-          demoEntries={data.demoEntries}
-          sources={hasSources}
-        />
+        <DemoNotice demoEntries={data.demoEntries} />
 
         <div className="grid grid--stats">
           <StatCard
@@ -69,18 +80,6 @@ export default async function CommunityOverviewPage({
             deltaSuffix="new this week"
             accent
           />
-          {/* Only communities with Sheets coverage have a lead count at all. */}
-          {totals.leads !== null ? (
-            <StatCard
-              label="Leads this week"
-              value={formatExact(totals.leads)}
-              hint={
-                totals.sessions !== null
-                  ? `${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`
-                  : 'from the registration sheet'
-              }
-            />
-          ) : null}
           <StatCardPercentDelta
             label="Poll response rate"
             value={formatPercent(totals.pollResponseRatePct)}
@@ -93,13 +92,29 @@ export default async function CommunityOverviewPage({
           />
         </div>
 
-        {funnel ? (
-          <div style={{ marginTop: 14 }}>
-            <TrafficFunnel
-              totals={funnel}
-              subtitle={`Short.io → GA4 → registrations, attributed to ${community.label}`}
+        {sources.length > 0 ? (
+          <>
+            <h2 className="sectionTitle">
+              Imported figures · week of {formatWeekRange(data.displayWeek)}
+            </h2>
+            <ImportedFigures
+              week={imported}
+              series={importSeries}
+              emptyHint={`Nothing imported for this week yet. Open “Import data” below to upload the ${sources
+                .map((s) => s.label)
+                .join(' and ')} export.`}
             />
-          </div>
+            <div style={{ marginTop: 14 }}>
+              <ImportPanel
+                community={community.slug}
+                communityLabel={community.label}
+                weekOptions={entryWeekOptions()}
+                defaultWeek={data.displayWeek}
+                sources={sources}
+                existing={communityImports}
+              />
+            </div>
+          </>
         ) : null}
 
         <h2 className="sectionTitle">

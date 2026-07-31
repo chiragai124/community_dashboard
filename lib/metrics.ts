@@ -1,23 +1,13 @@
 import type {
   GroupSlug,
-  IntegrationName,
   GroupWeekMetrics,
-  IntegrationSnapshot,
-  LeadsBySource,
   MetricKey,
   Poll,
   PollHistoryRow,
-  Registration,
   WeeklyEntry,
 } from './types';
-import {
-  ALL_SOURCE_LABELS,
-  attributeRegistration,
-  bucketSource,
-  getGroup,
-  groupHasSource,
-} from './groups';
-import { isInWeek, lastNWeeks, previousWeek } from './weeks';
+import { getGroup } from './groups';
+import { lastNWeeks, previousWeek } from './weeks';
 
 /**
  * Every derived number in the dashboard is computed here. Nothing in this file
@@ -59,111 +49,13 @@ export function newMembersFor(
   return entry.totalMembers - previous.totalMembers;
 }
 
-/* --------------------------------------------------- automated-source slices */
-
-/**
- * Registrations belonging to a group.
- *
- * Attribution is exclusive — each registration counts towards exactly one group
- * (campaign first, then country), so the same person can never be counted in
- * two communities. See attributeRegistration in lib/groups.ts.
- */
-export function registrationsForGroup(
-  registrations: Registration[],
-  group: GroupSlug,
-): Registration[] {
-  return registrations.filter((r) => attributeRegistration(r) === group);
-}
-
-/**
- * GA4 sessions for a group's campaigns within one week.
- *
- * Null — not zero — for a group whose community declares no GA4 coverage: the
- * source doesn't measure that group, so there is no number to report.
- */
-export function sessionsForGroupWeek(
-  snapshot: IntegrationSnapshot,
-  group: GroupSlug,
-  weekStart: string,
-): number | null {
-  const config = getGroup(group);
-  if (!config || !groupHasSource(group, 'ga4')) return null;
-  const campaigns = config.utmCampaigns.map((c) => c.toLowerCase());
-  return snapshot.ga4
-    .filter((row) => campaigns.includes(row.campaign.trim().toLowerCase()))
-    .filter((row) => isInWeek(row.date, weekStart))
-    .reduce((sum, row) => sum + row.sessions, 0);
-}
-
-/** Short.io clicks for a group, bucketed by lead source. */
-export function clicksBySourceForGroup(
-  snapshot: IntegrationSnapshot,
-  group: GroupSlug,
-): Map<string, number> {
-  const config = getGroup(group);
-  const map = new Map<string, number>();
-  if (!config || !groupHasSource(group, 'shortio')) return map;
-  for (const link of snapshot.shortLinks) {
-    if (link.tag.trim().toLowerCase() !== config.shortioTag.toLowerCase()) continue;
-    const bucket = link.source || bucketSource(link.title);
-    map.set(bucket, (map.get(bucket) ?? 0) + link.clicks);
-  }
-  return map;
-}
-
-/**
- * Leads by source for one group-week, joined against Short.io clicks to give a
- * registrations-to-clicks conversion rate per source.
- *
- * Short.io's API reports lifetime clicks per link, not clicks-in-a-window, so
- * the weekly conversion rate below divides this week's leads by the link's
- * total clicks. It is a floor, not an exact weekly rate — the UI says so.
- */
-export function leadsBySourceForGroupWeek(
-  snapshot: IntegrationSnapshot,
-  group: GroupSlug,
-  weekStart: string,
-): LeadsBySource[] {
-  // No declared coverage on either side of the join → nothing to break down.
-  if (!groupHasSource(group, 'sheets') && !groupHasSource(group, 'shortio')) return [];
-
-  const regs = registrationsForGroup(snapshot.registrations, group).filter((r) =>
-    isInWeek(r.timestamp, weekStart),
-  );
-  const clicks = clicksBySourceForGroup(snapshot, group);
-
-  const leadCounts = new Map<string, number>();
-  for (const reg of regs) {
-    const bucket = bucketSource(reg.utmSource, reg.utmMedium);
-    leadCounts.set(bucket, (leadCounts.get(bucket) ?? 0) + 1);
-  }
-
-  const labels = new Set<string>([...ALL_SOURCE_LABELS, ...leadCounts.keys(), ...clicks.keys()]);
-
-  return [...labels]
-    .map((source) => {
-      const leads = leadCounts.get(source) ?? 0;
-      const clickCount = clicks.get(source) ?? 0;
-      return {
-        source,
-        leads,
-        clicks: clickCount,
-        conversionRate: clickCount > 0 ? (leads / clickCount) * 100 : null,
-      };
-    })
-    // Drop buckets with nothing on either side so the chart isn't padded with zeros.
-    .filter((row) => row.leads > 0 || row.clicks > 0)
-    .sort((a, b) => b.leads - a.leads || b.clicks - a.clicks);
-}
-
 /* --------------------------------------------------------- the main assembler */
 
-/** Manual + automated + derived, for one group and one week. */
+/** Manual entries plus the rates derived from them, for one group and one week. */
 export function buildGroupWeekMetrics(
   group: GroupSlug,
   weekStart: string,
   entries: WeeklyEntry[],
-  snapshot: IntegrationSnapshot,
 ): GroupWeekMetrics {
   const forGroup = entries.filter((e) => e.group === group);
   const entry = forGroup.find((e) => e.weekStart === weekStart) ?? null;
@@ -176,15 +68,6 @@ export function buildGroupWeekMetrics(
 
   const responses = entry ? pollResponses(entry.polls) : 0;
   const newMembers = newMembersFor(entry, prev);
-
-  // Sheets-covered groups get a lead count (possibly 0); everyone else gets
-  // null, so "unmeasured" can never masquerade as "zero leads".
-  const sheetsCovered = groupHasSource(group, 'sheets');
-  const regs = sheetsCovered
-    ? registrationsForGroup(snapshot.registrations, group).filter((r) =>
-        isInWeek(r.timestamp, weekStart),
-      )
-    : [];
 
   return {
     group,
@@ -210,10 +93,6 @@ export function buildGroupWeekMetrics(
 
     activityLevel: entry?.activityLevel ?? null,
     notes: entry?.notes ?? '',
-
-    totalLeads: sheetsCovered ? regs.length : null,
-    totalSessions: sessionsForGroupWeek(snapshot, group, weekStart),
-    leadsBySource: leadsBySourceForGroupWeek(snapshot, group, weekStart),
   };
 }
 
@@ -222,9 +101,8 @@ export function buildGroupSeries(
   group: GroupSlug,
   weeks: string[],
   entries: WeeklyEntry[],
-  snapshot: IntegrationSnapshot,
 ): GroupWeekMetrics[] {
-  return weeks.map((week) => buildGroupWeekMetrics(group, week, entries, snapshot));
+  return weeks.map((week) => buildGroupWeekMetrics(group, week, entries));
 }
 
 /** Poll history for a group, newest week first, one row per poll. */
@@ -273,11 +151,6 @@ export interface MetricDef {
   unit: 'count' | 'percent';
   /** How to describe the number in a tooltip or axis. */
   description: string;
-  /**
-   * The automated source this metric needs. A community that doesn't declare
-   * it simply doesn't get the metric offered — no empty charts.
-   */
-  requires?: IntegrationName;
 }
 
 export const METRIC_DEFS: MetricDef[] = [
@@ -316,22 +189,6 @@ export const METRIC_DEFS: MetricDef[] = [
     unit: 'percent',
     description: 'Replies received ÷ 1:1 DMs sent',
   },
-  {
-    key: 'totalLeads',
-    label: 'Leads',
-    shortLabel: 'Leads',
-    unit: 'count',
-    description: 'Registrations from the sheet, attributed to this group',
-    requires: 'sheets',
-  },
-  {
-    key: 'totalSessions',
-    label: 'Site traffic',
-    shortLabel: 'Sessions',
-    unit: 'count',
-    description: "GA4 sessions on this group's UTM campaigns",
-    requires: 'ga4',
-  },
 ];
 
 export function metricValue(m: GroupWeekMetrics, key: MetricKey): number | null {
@@ -346,10 +203,6 @@ export function metricValue(m: GroupWeekMetrics, key: MetricKey): number | null 
       return m.pollResponseRatePct;
     case 'dmReplyRatePct':
       return m.dmReplyRatePct;
-    case 'totalLeads':
-      return m.totalLeads;
-    case 'totalSessions':
-      return m.totalSessions;
     default:
       return null;
   }

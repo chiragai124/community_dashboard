@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { PageHeader } from '@/components/PageHeader';
 import { TrendsView, type TrendMetric } from '@/components/TrendsView';
 import { DemoNotice } from '@/components/DemoNotice';
-import { getCommunity, integrationsFor } from '@/lib/groups';
+import { getCommunity } from '@/lib/groups';
 import { groupsInCommunity, loadDashboard, multiGroupRows } from '@/lib/dashboard';
 import { METRIC_DEFS } from '@/lib/metrics';
 import type { MultiRow } from '@/components/charts';
@@ -20,12 +20,10 @@ export default async function CommunityTrendsPage({
 
   const data = await loadDashboard();
   const slugs = community.groups.map((g) => g.slug);
-  const sources = integrationsFor(community.slug);
-  const hasSources = sources.length > 0;
 
   // Only offer metrics whose source actually covers this community — a
   // manual-only community gets no Leads or Sessions toggles at all.
-  const defs = METRIC_DEFS.filter((def) => !def.requires || sources.includes(def.requires));
+  const defs = METRIC_DEFS;
 
   const metrics: TrendMetric[] = defs.map((def) => ({
     key: def.key,
@@ -53,16 +51,10 @@ export default async function CommunityTrendsPage({
         title="Metrics over time"
         weekStart={data.displayWeek}
         weekCaption="Window ends"
-        states={hasSources ? data.snapshot.states : []}
-        fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice
-          snapshot={data.snapshot}
-          demoEntries={data.demoEntries}
-          sources={hasSources}
-        />
+        <DemoNotice demoEntries={data.demoEntries} />
         <TrendsView
           metrics={metrics}
           rowsByMetric={rowsByMetric}

@@ -4,13 +4,15 @@ import { CommunityRollupCard } from '@/components/CommunityRollupCard';
 import { MultiGroupTrend } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
 import { COMMUNITIES, countNoun } from '@/lib/groups';
-import { TrafficFunnel } from '@/components/TrafficFunnel';
+import { ImportedFigures } from '@/components/ImportedFigures';
 import {
+  IMPORTED_FIGURES,
+  importedSeries,
   loadDashboard,
+  mergedImported,
   mergedTotals,
   multiCommunityRows,
   perCommunityTotals,
-  trafficFunnel,
 } from '@/lib/dashboard';
 import { formatExact, formatPercent, pct } from '@/lib/metrics';
 import { formatWeekRange } from '@/lib/weeks';
@@ -46,6 +48,14 @@ export default async function MergedOverviewPage() {
   const allSlugs = data.perGroup.map((m) => m.group);
   const mergedGrowth = growthFor(allSlugs);
 
+  const imported = mergedImported(data);
+  const importSeries = Object.fromEntries(
+    IMPORTED_FIGURES.map((figure) => [
+      figure.key,
+      importedSeries(data, 'merged', figure.pick),
+    ]),
+  );
+
   const communitySeries = COMMUNITIES.map((c) => ({ key: c.slug, label: c.label }));
   const memberRows = multiCommunityRows(data, 'totalMembers');
   const biggest = [...byCommunity].sort((a, b) => b.totals.members - a.totals.members)[0];
@@ -56,12 +66,10 @@ export default async function MergedOverviewPage() {
         eyebrow="Merged · All communities"
         title="Combined report"
         weekStart={data.displayWeek}
-        states={data.snapshot.states}
-        fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice demoEntries={data.demoEntries} />
 
         <div className="grid grid--stats">
           <StatCard
@@ -75,17 +83,6 @@ export default async function MergedOverviewPage() {
             }
             accent
           />
-          {totals.leads !== null ? (
-            <StatCard
-              label="Leads this week"
-              value={formatExact(totals.leads)}
-              hint={
-                totals.sessions !== null
-                  ? `${formatPercent(totals.leadConversionPct)} of ${formatExact(totals.sessions)} sessions`
-                  : 'from the registration sheet'
-              }
-            />
-          ) : null}
           <StatCardPercentDelta
             label="Poll response rate"
             value={formatPercent(totals.pollResponseRatePct)}
@@ -102,17 +99,17 @@ export default async function MergedOverviewPage() {
           Pooled across {countNoun(COMMUNITIES.length, 'communities')} and{' '}
           {countNoun(totals.groupCount, 'groups')}, for the week of{' '}
           {formatWeekRange(data.displayWeek)}. Rates are recomputed from summed numerators and
-          denominators, not averaged across communities. Traffic and lead figures cover only
-          the communities the automated sources represent.
+          denominators, not averaged across communities.
         </p>
 
-        {/* The combined traffic/funnel layer: every declared source across every
-            community, rolled up. Scoped by config, so a future community's
-            sources join this automatically. */}
-        <h2 className="sectionTitle">Traffic &amp; funnel · automated sources</h2>
-        <TrafficFunnel
-          totals={trafficFunnel(data)}
-          subtitle="Short.io → GA4 → registrations, across every community with declared sources"
+        {/* Imported figures summed across every community that has an upload for
+            this week. A community with no file contributes nothing rather than a
+            zero, so the total never implies coverage it doesn't have. */}
+        <h2 className="sectionTitle">Imported figures · both communities</h2>
+        <ImportedFigures
+          week={imported}
+          series={importSeries}
+          emptyHint="Nothing imported for this week yet. Upload the Short.io and GA4 exports from either community's page."
         />
 
         <h2 className="sectionTitle">By community</h2>

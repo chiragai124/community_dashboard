@@ -40,12 +40,10 @@ export default async function MergedTrendsPage() {
         title="Trends by community"
         weekStart={data.displayWeek}
         weekCaption="Window ends"
-        states={data.snapshot.states}
-        fetchedAt={data.snapshot.fetchedAt}
       />
 
       <div className="content">
-        <DemoNotice snapshot={data.snapshot} demoEntries={data.demoEntries} />
+        <DemoNotice demoEntries={data.demoEntries} />
         <TrendsView
           metrics={metrics}
           rowsByMetric={rowsByMetric}

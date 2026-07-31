@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
-import type { IntegrationState } from '@/lib/types';
 import { formatWeekRange, isoWeekNumber } from '@/lib/weeks';
-import { formatRelativeTime } from '@/lib/metrics';
-import { RefreshButton } from './RefreshButton';
 
 /**
- * Top of every page: the current group (or view) name plus the week being
- * shown, then the data-source strip and the manual refresh control.
+ * Top of every page: the current group (or view) name plus the week being shown.
+ *
+ * There is no data-source strip or refresh control any more: nothing is fetched,
+ * so there is no connection state to report and nothing to re-pull. What was
+ * imported, and when, is shown by the import panel on the pages that have one.
  */
 export function PageHeader({
   eyebrow,
@@ -14,8 +14,6 @@ export function PageHeader({
   titleAccessory,
   weekStart,
   weekCaption = 'This week',
-  states,
-  fetchedAt,
   children,
 }: {
   eyebrow: string;
@@ -23,8 +21,6 @@ export function PageHeader({
   titleAccessory?: ReactNode;
   weekStart: string;
   weekCaption?: string;
-  states: IntegrationState[];
-  fetchedAt: string;
   children?: ReactNode;
 }) {
   return (
@@ -44,42 +40,7 @@ export function PageHeader({
           <span className="weekChip__value">{formatWeekRange(weekStart)}</span>
           <span className="weekChip__label">W{isoWeekNumber(weekStart)}</span>
         </span>
-        {/* Manual-only pages pass no states: the source pills and the refresh
-            button describe pulled data those pages don't use. */}
-        {states.length > 0 ? <SourceStrip states={states} fetchedAt={fetchedAt} /> : null}
       </div>
     </header>
-  );
-}
-
-/** One pill per automated source, saying plainly whether it is live or demo. */
-export function SourceStrip({
-  states,
-  fetchedAt,
-}: {
-  states: IntegrationState[];
-  fetchedAt: string;
-}) {
-  return (
-    <span className="sourceStrip">
-      {states.map((state) => (
-        <span
-          className="sourcePill"
-          key={state.name}
-          title={`${state.label}: ${state.message}`}
-        >
-          <span
-            className={`sourcePill__dot sourcePill__dot--${state.status === 'live' ? 'live' : 'demo'}`}
-            aria-hidden="true"
-          />
-          {state.label.replace(/^.*\((.*)\)$/, '$1')}
-          {state.status === 'live' ? '' : state.status === 'demo' ? ' · demo' : ' · error'}
-        </span>
-      ))}
-      <span className="sourcePill" title={new Date(fetchedAt).toISOString()}>
-        Pulled {formatRelativeTime(fetchedAt)}
-      </span>
-      <RefreshButton />
-    </span>
   );
 }
