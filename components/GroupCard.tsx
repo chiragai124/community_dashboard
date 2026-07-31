@@ -3,7 +3,7 @@ import type { GroupWeekMetrics } from '@/lib/types';
 import { communityOf, getGroup, singularize } from '@/lib/groups';
 import { formatExact, formatSigned, formatSignedPercent } from '@/lib/metrics';
 import { ActivityBadge } from './StatCard';
-import { WeekQualitative } from './WeekQualitative';
+import { GroupTopics, WeekQualitative } from './WeekQualitative';
 
 /**
  * One group on the overview grid: member count, new members, activity level and
@@ -73,6 +73,11 @@ export function GroupCard({ metrics }: { metrics: GroupWeekMetrics }) {
 
       </div>
       </Link>
+
+      {/* Topics sit above the collapsed notes and are always visible: this is the
+          "what was this channel talking about" answer, and it was invisible while
+          it lived behind the expander. */}
+      <GroupTopics entry={metrics.entry} />
 
       {/* Between the figures and the CTA, so the call to action stays the last
           row of the card. */}

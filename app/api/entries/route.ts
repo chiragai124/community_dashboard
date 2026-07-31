@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getEntries, getEntriesForGroup, saveEntry } from '@/lib/store';
 import { isGroupSlug } from '@/lib/groups';
-import type { ActivityLevel, Poll, WeeklyEntryInput } from '@/lib/types';
+import type {
+  ActivityLevel,
+  NewMembersBySource,
+  Poll,
+  SentimentBreakdown,
+  SentimentKey,
+  WeeklyEntryInput,
+} from '@/lib/types';
+import { MEMBER_SOURCE_KEYS, SENTIMENT_KEYS } from '@/lib/types';
 
 /**
  * GET  /api/entries?group=uk   → stored weekly entries (all, or one group's)
@@ -37,6 +45,9 @@ function parseActivity(value: unknown): ActivityLevel {
  * A list of short strings. Accepts an array or a single comma/newline-separated
  * string, so the API is usable by hand as well as by the form. Items are trimmed,
  * blanks dropped, and each is capped so a pasted essay can't land in a tag list.
+ *
+ * NOTE for callers passing quoted message snippets: pass an ARRAY. A snippet
+ * containing a comma would otherwise be split into two fragments.
  */
 function parseStringList(value: unknown, maxItemLength = 160, maxItems = 40): string[] {
   const items = Array.isArray(value)
@@ -70,6 +81,41 @@ function parsePolls(value: unknown): Poll[] {
       return { question: String(poll.question ?? '').trim(), options };
     })
     .filter((poll) => poll.question !== '');
+}
+
+/**
+ * Sentiment from the wire. Percentages pass through as typed — the store clamps
+ * them to 0-100 — and each sentiment keeps at most three example snippets.
+ */
+function parseSentiment(value: unknown): Partial<SentimentBreakdown> {
+  if (!value || typeof value !== 'object') return {};
+  const raw = value as Record<string, unknown>;
+  const rawExamples = (raw.examples ?? {}) as Record<string, unknown>;
+
+  const examples = {} as Record<SentimentKey, string[]>;
+  for (const key of SENTIMENT_KEYS) {
+    examples[key] = parseStringList(rawExamples[key], 400, 3);
+  }
+
+  return {
+    positivePct: raw.positivePct as number | null,
+    neutralPct: raw.neutralPct as number | null,
+    negativePct: raw.negativePct as number | null,
+    examples,
+  };
+}
+
+function parseSources(value: unknown): Partial<NewMembersBySource> {
+  if (!value || typeof value !== 'object') return {};
+  const raw = value as Record<string, unknown>;
+  const out: Partial<NewMembersBySource> = {};
+  for (const key of MEMBER_SOURCE_KEYS) {
+    const cell = raw[key];
+    if (cell === null || cell === undefined || cell === '') continue;
+    const n = Number(cell);
+    if (Number.isFinite(n)) out[key] = Math.max(0, Math.round(n));
+  }
+  return out;
 }
 
 export async function POST(request: Request) {
@@ -124,6 +170,8 @@ export async function POST(request: Request) {
     mainTopics: parseStringList(body.mainTopics, 60),
     commonQuestions: parseStringList(body.commonQuestions, 200),
     contentResponse: String(body.contentResponse ?? '').trim().slice(0, 1000),
+    sentiment: parseSentiment(body.sentiment),
+    newMembersBySource: parseSources(body.newMembersBySource),
     notes: String(body.notes ?? ''),
   };
 

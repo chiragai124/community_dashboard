@@ -69,6 +69,54 @@ export interface CommunityConfig {
   groups: GroupConfig[];
 }
 
+/* ------------------------------------------------------------- sentiment -- */
+
+export type SentimentKey = 'positive' | 'neutral' | 'negative';
+
+export const SENTIMENT_KEYS: SentimentKey[] = ['positive', 'neutral', 'negative'];
+
+/**
+ * Hand-entered sentiment for a group-week, with example messages.
+ *
+ * Percentages are stored exactly as typed and are NOT normalised to 100. If they
+ * don't add up, that is either a typo or a deliberate "these are the three
+ * buckets I counted, some messages fit none" — and quietly rescaling would hide
+ * both. The UI shows the shortfall or overshoot instead.
+ */
+export interface SentimentBreakdown {
+  positivePct: number | null;
+  neutralPct: number | null;
+  negativePct: number | null;
+  /** Up to three example message snippets per sentiment. */
+  examples: Record<SentimentKey, string[]>;
+}
+
+/* --------------------------------------------------- new members by source */
+
+/**
+ * Where a week's new members came from, entered by hand.
+ *
+ * This is typed rather than derived because it cannot be derived: Short.io
+ * reports clicks and GA4 reports sessions, and neither is a join. Apportioning
+ * growth by click share would invent a number that looks authoritative.
+ */
+export type MemberSourceKey = 'whatsappLink' | 'landingPage' | 'other';
+
+export const MEMBER_SOURCE_KEYS: MemberSourceKey[] = [
+  'whatsappLink',
+  'landingPage',
+  'other',
+];
+
+export const MEMBER_SOURCE_LABELS: Record<MemberSourceKey, string> = {
+  whatsappLink: 'WhatsApp link',
+  landingPage: 'Landing page',
+  other: 'Organic / other',
+};
+
+/** Null per source means "not broken down", never "zero from this source". */
+export type NewMembersBySource = Record<MemberSourceKey, number | null>;
+
 /** One poll posted in a group during a week. */
 export interface Poll {
   question: string;
@@ -108,6 +156,10 @@ export interface WeeklyEntry {
   commonQuestions: string[];
   /** How students responded to posted content — polls, announcements, media. */
   contentResponse: string;
+  /** Hand-entered sentiment split and example messages. */
+  sentiment: SentimentBreakdown;
+  /** Where the week's new members came from. */
+  newMembersBySource: NewMembersBySource;
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -127,6 +179,8 @@ export interface WeeklyEntryInput {
   mainTopics?: string[];
   commonQuestions?: string[];
   contentResponse?: string;
+  sentiment?: Partial<SentimentBreakdown>;
+  newMembersBySource?: Partial<NewMembersBySource>;
   notes?: string;
 }
 
@@ -224,6 +278,48 @@ export interface GroupWeekMetrics {
 
   activityLevel: ActivityLevel | null;
   notes: string;
+}
+
+/* ----------------------------------------------------------------- leads -- */
+
+/**
+ * One hand-entered lead.
+ *
+ * PERSONAL DATA. Name, email and phone are identifying, so these rows live only
+ * in data/leads.json (gitignored) and are never sent anywhere. Nothing in the app
+ * transmits them off the machine.
+ */
+export interface Lead {
+  id: string;
+  /** The group that produced the lead; its community follows from the slug. */
+  group: GroupSlug;
+  name: string;
+  email: string;
+  phone: string;
+  university: string;
+  country: string;
+  /** ISO week start the lead is filed under, so "this week" is answerable. */
+  weekStart: string;
+  createdAt: string;
+}
+
+/** Payload accepted by POST /api/leads — one lead, or a pasted block of rows. */
+export interface LeadInput {
+  group: GroupSlug;
+  weekStart: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  university?: string;
+  country?: string;
+}
+
+/** One row of a leads breakdown — by university, or by country. */
+export interface LeadBreakdownRow {
+  label: string;
+  leads: number;
+  /** Share of the leads in scope, as a percentage. */
+  sharePct: number;
 }
 
 export interface PollHistoryRow {

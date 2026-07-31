@@ -1,8 +1,13 @@
 import type { WeeklyEntry } from '@/lib/types';
 
 /**
- * The week's qualitative notes — main topics, common student questions, how
- * students responded to content, and why the activity level is what it is.
+ * The week's qualitative notes — common student questions, how students responded
+ * to content, and why the activity level is what it is.
+ *
+ * MAIN TOPICS ARE NOT HERE. They are rendered always-visible by <GroupTopics>,
+ * because "what was this channel talking about" is the question a card is most
+ * often opened to answer, and burying it behind a click made it invisible in
+ * practice. Everything below is genuinely secondary and stays collapsed.
  *
  * Collapsed by default via native <details>, so the card and detail page stay
  * compact and nothing here needs client JavaScript. Renders nothing at all when
@@ -16,7 +21,6 @@ import type { WeeklyEntry } from '@/lib/types';
 export function hasQualitative(entry: WeeklyEntry | null | undefined): boolean {
   if (!entry) return false;
   return (
-    entry.mainTopics.length > 0 ||
     entry.commonQuestions.length > 0 ||
     entry.contentResponse.trim() !== '' ||
     entry.activityNote.trim() !== ''
@@ -26,11 +30,54 @@ export function hasQualitative(entry: WeeklyEntry | null | undefined): boolean {
 /** Count of filled fields, shown on the summary so the value is visible closed. */
 function filledCount(entry: WeeklyEntry): number {
   return [
-    entry.mainTopics.length > 0,
     entry.commonQuestions.length > 0,
     entry.contentResponse.trim() !== '',
     entry.activityNote.trim() !== '',
   ].filter(Boolean).length;
+}
+
+/**
+ * Main topics, always visible. `variant` picks the padding: "card" sits inside a
+ * group card, "panel" inside a detail-page section.
+ */
+export function GroupTopics({
+  entry,
+  variant = 'card',
+  label = 'Topics this week',
+}: {
+  entry: WeeklyEntry | null | undefined;
+  variant?: 'card' | 'panel';
+  label?: string;
+}) {
+  if (!entry || entry.mainTopics.length === 0) return null;
+
+  if (variant === 'panel') {
+    return (
+      <div className="qual__field">
+        <div className="qual__fieldLabel">{label}</div>
+        <div className="tagRow">
+          {entry.mainTopics.map((topic) => (
+            <span className="tag" key={topic}>
+              {topic}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="groupCard__topicsLabel">{label}</div>
+      <div className="groupCard__topics">
+        {entry.mainTopics.map((topic) => (
+          <span className="tag" key={topic}>
+            {topic}
+          </span>
+        ))}
+      </div>
+    </>
+  );
 }
 
 export function WeekQualitative({
@@ -55,27 +102,11 @@ export function WeekQualitative({
         </span>
         <span className="qual__summaryLabel">{label}</span>
         <span className="qual__summaryHint">
-          {entry.mainTopics.length > 0
-            ? entry.mainTopics.slice(0, 2).join(' · ')
-            : `${count} note${count === 1 ? '' : 's'}`}
-          {entry.mainTopics.length > 2 ? ` +${entry.mainTopics.length - 2}` : ''}
+          {count} note{count === 1 ? '' : 's'}
         </span>
       </summary>
 
       <div className="qual__body">
-        {entry.mainTopics.length > 0 ? (
-          <div className="qual__field">
-            <div className="qual__fieldLabel">Main topics</div>
-            <div className="tagRow">
-              {entry.mainTopics.map((topic) => (
-                <span className="tag" key={topic}>
-                  {topic}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
         {entry.commonQuestions.length > 0 ? (
           <div className="qual__field">
             <div className="qual__fieldLabel">Common student questions</div>

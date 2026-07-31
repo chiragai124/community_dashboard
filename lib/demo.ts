@@ -129,6 +129,28 @@ const ACTIVITY_NOTE_TEMPLATES = [
   'Quiet but high-intent: fewer messages, more booking questions.',
 ];
 
+/** Example message snippets, so the demo sentiment panel shows its real shape. */
+const SENTIMENT_EXAMPLES = {
+  positive: [
+    'Booked through the link, whole thing took ten minutes — thank you!',
+    'This group has been more useful than my university’s own portal.',
+    'Got my visa approved today 🎉 the checklist here really helped.',
+    'Found a flatmate in this group, we’re signing tomorrow.',
+  ],
+  neutral: [
+    'Is the deadline the 15th or the 20th? Just want to be sure.',
+    'Does anyone know if bills are included at that property?',
+    'Following — same question about the guarantor.',
+    'Will there be a session about part-time work rules?',
+  ],
+  negative: [
+    'Still waiting on a reply about my deposit, it has been four days.',
+    'The rent went up since the last listing I saw here, feels misleading.',
+    'Too many announcements, hard to find the actual answers.',
+    'Missed the scholarship deadline because the reminder came too late.',
+  ],
+};
+
 const NOTE_TEMPLATES = [
   'Strong response after the Instagram story drop on Tuesday.',
   'Quiet week — exam season in most universities.',
@@ -139,7 +161,6 @@ const NOTE_TEMPLATES = [
   'Slower start, picked up after the Thursday property drop.',
 ];
 
-/** UTM source/medium pairs matching the four tracked lead sources. */
 /* ------------------------------------------------------------ weekly entries */
 
 /** Eight weeks of manual entries across every group in every community. */
@@ -195,6 +216,17 @@ export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[]
       const mainTopics = pickSome(rand, TOPIC_POOL, randInt(rand, 2, 3));
       const commonQuestions = pickSome(rand, QUESTION_POOL, randInt(rand, 2, 3));
 
+      // A sentiment split that drifts a little week to week and sums to 100.
+      const positivePct = Math.round((0.46 + rand() * 0.22) * 1000) / 10;
+      const negativePct = Math.round((0.08 + rand() * 0.14) * 1000) / 10;
+      const neutralPct = Math.round((100 - positivePct - negativePct) * 10) / 10;
+
+      // The source split adds up to the week's growth, so the breakdown and the
+      // headline new-member figure agree — as a real hand-entered week would.
+      const viaLink = Math.max(0, Math.round(added * (0.45 + rand() * 0.25)));
+      const viaLanding = Math.max(0, Math.round((added - viaLink) * (0.4 + rand() * 0.4)));
+      const viaOther = Math.max(0, added - viaLink - viaLanding);
+
       const now = parseISODate(weekStart).toISOString();
       entries.push({
         id: `${group.slug}:${weekStart}`,
@@ -210,6 +242,21 @@ export function demoEntries(endWeek: string = currentWeekStart()): WeeklyEntry[]
         mainTopics,
         commonQuestions,
         contentResponse: rand() > 0.25 ? pick(rand, CONTENT_RESPONSE_TEMPLATES) : '',
+        sentiment: {
+          positivePct,
+          neutralPct,
+          negativePct,
+          examples: {
+            positive: pickSome(rand, SENTIMENT_EXAMPLES.positive, randInt(rand, 2, 3)),
+            neutral: pickSome(rand, SENTIMENT_EXAMPLES.neutral, randInt(rand, 1, 3)),
+            negative: pickSome(rand, SENTIMENT_EXAMPLES.negative, randInt(rand, 1, 2)),
+          },
+        },
+        newMembersBySource: {
+          whatsappLink: viaLink,
+          landingPage: viaLanding,
+          other: viaOther,
+        },
         notes: rand() > 0.45 ? pick(rand, NOTE_TEMPLATES) : '',
         createdAt: now,
         updatedAt: now,

@@ -1715,3 +1715,157 @@ input[type='file'] {
 input[type='file']:hover:not(:disabled) {
   border-color: var(--accent);
 }
+
+/* ---------------------------------------------------------------- sentiment */
+/* Three shares of one whole, so one stacked bar rather than three bars or a pie.
+ *
+ * Colour within the single-accent rule: the accent marks NEGATIVE, because that
+ * is the share that wants attention, and the other two step down through the ink
+ * ramp. Encoding positive in the accent would spend the palette's one loud colour
+ * on the outcome nobody needs alerting to — and inventing a green would break the
+ * "one accent" constraint the whole dashboard is built on. Order is meaningful
+ * (positive → neutral → negative), so a dark-to-accent ramp reads correctly. */
+
+.sentBar {
+  display: flex;
+  width: 100%;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.sentBar__seg {
+  height: 100%;
+  transition: width 0.15s ease;
+}
+
+.sentBar__seg--positive {
+  background: var(--ink);
+}
+
+.sentBar__seg--neutral {
+  background: var(--chart-context);
+}
+
+.sentBar__seg--negative {
+  background: var(--accent);
+}
+
+.sentLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 11px;
+}
+
+.sentLegend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sentLegend__key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.sentLegend__key--positive {
+  background: var(--ink);
+}
+
+.sentLegend__key--neutral {
+  background: var(--chart-context);
+}
+
+.sentLegend__key--negative {
+  background: var(--accent);
+}
+
+.sentLegend__label {
+  color: var(--ink-secondary);
+}
+
+.sentLegend__val {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.sentQuotes {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 15px;
+}
+
+.sentQuotes__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* Quoted student messages. A left rule in the sentiment's own colour ties each
+   quote to its share without repeating the label on every line. */
+.sentQuote {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 7px 10px;
+}
+
+.sentQuote--positive {
+  border-left-color: var(--ink);
+}
+
+.sentQuote--neutral {
+  border-left-color: var(--chart-context);
+}
+
+.sentQuote--negative {
+  border-left-color: var(--accent);
+}
+
+/* -------------------------------------------------------- topics per group */
+/* Item 1: topics were previously inside the collapsed notes expander. They are
+   now always visible on the card, since "what was this channel talking about"
+   is the question the card is most often opened to answer. */
+
+.groupCard__topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 15px 12px;
+}
+
+.groupCard__topicsLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  padding: 0 15px 5px;
+}
+
+/* ------------------------------------------------------------------- leads */
+
+.leadTable__cell--muted {
+  color: var(--ink-muted);
+}
+
+.pasteBox {
+  width: 100%;
+  min-height: 132px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}

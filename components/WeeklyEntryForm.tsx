@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { ActivityLevel, GroupSlug, Poll, WeeklyEntry } from '@/lib/types';
+import type {
+  ActivityLevel,
+  GroupSlug,
+  MemberSourceKey,
+  Poll,
+  SentimentKey,
+  WeeklyEntry,
+} from '@/lib/types';
+import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS, SENTIMENT_KEYS } from '@/lib/types';
 import { formatPercent, formatSigned, formatSignedPercent } from '@/lib/metrics';
 import { formatWeekRange, isoWeekNumber } from '@/lib/weeks';
 
@@ -46,12 +54,33 @@ function toFormPolls(polls: Poll[]): FormPoll[] {
   }));
 }
 
+/**
+ * Split on NEWLINES only. Used for quoted message snippets, which routinely
+ * contain commas — splitting on those would chop one quote into several.
+ */
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+    .slice(0, 3);
+}
+
 /** Split a comma- or newline-separated field into trimmed, non-empty items. */
 function splitList(value: string): string[] {
   return value
     .split(/[,\n]/)
     .map((s) => s.trim())
     .filter((s) => s !== '');
+}
+
+/** A stored percentage back into a field value; '' for "not entered". */
+function pctToField(value: number | null): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function countToField(value: number | null): string {
+  return value === null || value === undefined ? '' : String(value);
 }
 
 function num(value: string): number | null {
@@ -103,6 +132,24 @@ export function WeeklyEntryForm({
   const [notes, setNotes] = useState('');
   const [polls, setPolls] = useState<FormPoll[]>([structuredClone(EMPTY_POLL)]);
 
+  // Sentiment percentages and up to three example snippets each, kept as strings
+  // so a half-typed number doesn't fight the input.
+  const [sentimentPct, setSentimentPct] = useState<Record<SentimentKey, string>>({
+    positive: '',
+    neutral: '',
+    negative: '',
+  });
+  const [sentimentExamples, setSentimentExamples] = useState<Record<SentimentKey, string>>({
+    positive: '',
+    neutral: '',
+    negative: '',
+  });
+  const [sources, setSources] = useState<Record<MemberSourceKey, string>>({
+    whatsappLink: '',
+    landingPage: '',
+    other: '',
+  });
+
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -129,6 +176,21 @@ export function WeeklyEntryForm({
       setMainTopics(existing.mainTopics.join(', '));
       setCommonQuestions(existing.commonQuestions.join('\n'));
       setContentResponse(existing.contentResponse);
+      setSentimentPct({
+        positive: pctToField(existing.sentiment.positivePct),
+        neutral: pctToField(existing.sentiment.neutralPct),
+        negative: pctToField(existing.sentiment.negativePct),
+      });
+      setSentimentExamples({
+        positive: existing.sentiment.examples.positive.join('\n'),
+        neutral: existing.sentiment.examples.neutral.join('\n'),
+        negative: existing.sentiment.examples.negative.join('\n'),
+      });
+      setSources({
+        whatsappLink: countToField(existing.newMembersBySource.whatsappLink),
+        landingPage: countToField(existing.newMembersBySource.landingPage),
+        other: countToField(existing.newMembersBySource.other),
+      });
       setNotes(existing.notes);
       setPolls(toFormPolls(existing.polls));
       return;
@@ -144,6 +206,11 @@ export function WeeklyEntryForm({
     setMainTopics('');
     setCommonQuestions('');
     setContentResponse('');
+    // Sentiment and the source split describe THIS week's messages and joins, so
+    // they never carry over — a stale split would silently double-count a source.
+    setSentimentPct({ positive: '', neutral: '', negative: '' });
+    setSentimentExamples({ positive: '', neutral: '', negative: '' });
+    setSources({ whatsappLink: '', landingPage: '', other: '' });
     setNotes('');
     setPolls([structuredClone(EMPTY_POLL)]);
   }, [existing, previous, weekStart]);
@@ -177,6 +244,18 @@ export function WeeklyEntryForm({
   // will be split before they save it.
   const topicPreview = splitList(mainTopics);
   const questionCount = splitList(commonQuestions).length;
+
+  // Percentages are shown summed rather than auto-normalised: if they don't reach
+  // 100 the user should see that and decide, not have it silently rescaled.
+  const sentimentEntered = SENTIMENT_KEYS.filter((k) => num(sentimentPct[k]) !== null);
+  const sentimentSum = sentimentEntered.reduce((sum, k) => sum + (num(sentimentPct[k]) ?? 0), 0);
+
+  // The source split is checked against the week's new-member figure, so a
+  // breakdown that contradicts the headline number is caught before saving.
+  const sourceEntered = MEMBER_SOURCE_KEYS.filter((k) => num(sources[k]) !== null);
+  const sourceTotal = sourceEntered.reduce((sum, k) => sum + (num(sources[k]) ?? 0), 0);
+  const sourceMismatch =
+    sourceEntered.length > 0 && derivedNewMembers !== null && sourceTotal !== derivedNewMembers;
 
   const dmsSentNum = num(dmsSent);
   const dmRepliesNum = num(dmReplies);
@@ -245,6 +324,23 @@ export function WeeklyEntryForm({
           mainTopics: splitList(mainTopics),
           commonQuestions: splitList(commonQuestions),
           contentResponse: contentResponse.trim(),
+          sentiment: {
+            positivePct: num(sentimentPct.positive),
+            neutralPct: num(sentimentPct.neutral),
+            negativePct: num(sentimentPct.negative),
+            // Arrays, not joined strings: a quoted message often contains a comma
+            // and would otherwise be split into fragments by the API.
+            examples: {
+              positive: splitLines(sentimentExamples.positive),
+              neutral: splitLines(sentimentExamples.neutral),
+              negative: splitLines(sentimentExamples.negative),
+            },
+          },
+          newMembersBySource: {
+            whatsappLink: num(sources.whatsappLink),
+            landingPage: num(sources.landingPage),
+            other: num(sources.other),
+          },
           notes: notes.trim(),
         }),
       });
@@ -484,6 +580,114 @@ export function WeeklyEntryForm({
             maxLength={1000}
           />
         </div>
+      </fieldset>
+
+      <fieldset className="fieldset">
+        <legend className="fieldset__legend">
+          Sentiment
+          <span className="field__hint">
+            {sentimentEntered.length > 0
+              ? sentimentSum === 100
+                ? ' · adds up to 100%'
+                : ` · adds up to ${sentimentSum}% — ${
+                    sentimentSum < 100 ? 'short of' : 'over'
+                  } 100`
+              : ' · share of messages, plus up to 3 examples each'}
+          </span>
+        </legend>
+
+        <div className="formGrid" style={{ marginBottom: 12 }}>
+          {SENTIMENT_KEYS.map((key) => (
+            <div className="field" key={key}>
+              <label className="field__label" htmlFor={`entry-sent-${key}`}>
+                {key.charAt(0).toUpperCase() + key.slice(1)}
+                <span className="field__hint">%</span>
+              </label>
+              <input
+                id={`entry-sent-${key}`}
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                inputMode="decimal"
+                value={sentimentPct[key]}
+                onChange={(e) =>
+                  setSentimentPct((current) => ({ ...current, [key]: e.target.value }))
+                }
+                placeholder="—"
+              />
+            </div>
+          ))}
+        </div>
+
+        {SENTIMENT_KEYS.map((key) => (
+          <div className="field" key={`${key}-examples`} style={{ marginBottom: 12 }}>
+            <label className="field__label" htmlFor={`entry-sent-ex-${key}`}>
+              {key.charAt(0).toUpperCase() + key.slice(1)} examples
+              <span className="field__hint">one message per line, up to 3</span>
+            </label>
+            <textarea
+              id={`entry-sent-ex-${key}`}
+              className="textarea--list"
+              value={sentimentExamples[key]}
+              onChange={(e) =>
+                setSentimentExamples((current) => ({ ...current, [key]: e.target.value }))
+              }
+              placeholder={
+                key === 'positive'
+                  ? 'Booked through the link, took ten minutes — thank you!'
+                  : key === 'neutral'
+                    ? 'Is the deadline the 15th or the 20th?'
+                    : 'Still waiting on a reply about my deposit.'
+              }
+            />
+          </div>
+        ))}
+        <p className="chartNote">
+          These are quoted student messages. They are stored on this machine only, in
+          data/weekly-entries.json, and are never sent anywhere.
+        </p>
+      </fieldset>
+
+      <fieldset className="fieldset">
+        <legend className="fieldset__legend">
+          New members by source
+          <span className="field__hint">
+            {sourceEntered.length > 0
+              ? ` · ${sourceTotal} split${
+                  derivedNewMembers !== null ? ` of ${derivedNewMembers} new members` : ''
+                }`
+              : ' · leave blank if you didn’t track it this week'}
+          </span>
+        </legend>
+
+        <div className="formGrid">
+          {MEMBER_SOURCE_KEYS.map((key) => (
+            <div className="field" key={key}>
+              <label className="field__label" htmlFor={`entry-src-${key}`}>
+                {MEMBER_SOURCE_LABELS[key]}
+              </label>
+              <input
+                id={`entry-src-${key}`}
+                type="number"
+                min="0"
+                inputMode="numeric"
+                value={sources[key]}
+                onChange={(e) => setSources((current) => ({ ...current, [key]: e.target.value }))}
+                placeholder="—"
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* A split that disagrees with the week's growth is almost always a typo,
+            and it is far cheaper to catch here than to explain on a chart later. */}
+        {sourceMismatch ? (
+          <p className="formMsg formMsg--err" style={{ marginTop: 10 }} role="status">
+            The split adds up to {sourceTotal}, but this week has {derivedNewMembers} new
+            members. Saving is allowed — the chart will show the split as entered.
+          </p>
+        ) : null}
       </fieldset>
 
       <div>

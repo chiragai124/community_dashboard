@@ -175,6 +175,15 @@ export function Sidebar({
               </span>
               Trends
             </Link>
+            <Link
+              href={`/c/${community.slug}/leads`}
+              className={`navItem${isActive(`/c/${community.slug}/leads`) ? ' navItem--active' : ''}`}
+            >
+              <span className="navItem__flag" aria-hidden="true">
+                ⇥
+              </span>
+              Leads
+            </Link>
           </>
         ) : null}
       </div>

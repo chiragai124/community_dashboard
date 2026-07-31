@@ -5,7 +5,9 @@ import { PollHistoryTable } from '@/components/PollHistoryTable';
 import { WeeklyEntryForm } from '@/components/WeeklyEntryForm';
 import { SingleTrendChart, Sparkline } from '@/components/charts';
 import { DemoNotice } from '@/components/DemoNotice';
-import { WeekQualitative, hasQualitative } from '@/components/WeekQualitative';
+import { GroupTopics, WeekQualitative, hasQualitative } from '@/components/WeekQualitative';
+import { SentimentPanel, hasSentiment } from '@/components/SentimentPanel';
+import { MemberSourceSplit } from '@/components/MemberSourceSplit';
 import { getCommunity, getGroup } from '@/lib/groups';
 import { entryWeekOptions, groupSeries, loadDashboard } from '@/lib/dashboard';
 import { buildPollHistory, formatExact, formatPercent } from '@/lib/metrics';
@@ -110,7 +112,28 @@ export default async function GroupPage({
 
         </div>
 
-        {metrics.notes.trim() !== '' || hasQualitative(metrics.entry) ? (
+        {/* Sentiment and the source split are per group and per week, so they sit
+            with the group's own figures rather than on the community overview. */}
+        {metrics.entry && hasSentiment(metrics.entry.sentiment) ? (
+          <div style={{ marginTop: 14 }}>
+            <SentimentPanel
+              sentiment={metrics.entry.sentiment}
+              subtitle={`${group.label} · week of ${formatWeekRange(data.displayWeek)}`}
+            />
+          </div>
+        ) : null}
+
+        {metrics.entry ? (
+          <div style={{ marginTop: 14 }}>
+            <MemberSourceSplit
+              split={metrics.entry.newMembersBySource}
+              newMembers={metrics.newMembers}
+              subtitle={`${group.label} · week of ${formatWeekRange(data.displayWeek)}`}
+            />
+          </div>
+        ) : null}
+
+        {metrics.notes.trim() !== '' || hasQualitative(metrics.entry) || (metrics.entry?.mainTopics.length ?? 0) > 0 ? (
           <section className="card" style={{ marginTop: 14 }}>
             <div className="card__head">
               <div className="card__title">
@@ -118,6 +141,12 @@ export default async function GroupPage({
               </div>
             </div>
             <div className="card__body">
+              {/* Always visible, above the collapsed secondary notes. */}
+              {(metrics.entry?.mainTopics.length ?? 0) > 0 ? (
+                <div style={{ marginBottom: 12 }}>
+                  <GroupTopics entry={metrics.entry} variant="panel" label="Topics this week" />
+                </div>
+              ) : null}
               {metrics.notes.trim() !== '' ? (
                 <p
                   style={{
