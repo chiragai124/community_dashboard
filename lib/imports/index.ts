@@ -2,14 +2,23 @@ import type { ImportSource } from '../types';
 
 export { extractShortio, ImportError } from './shortio';
 export { extractGa4 } from './ga4';
+export { extractChatTextFromZip, extractWhatsapp } from './whatsapp';
 export {
   deleteImport,
+  findGa4Import,
   findImport,
+  ga4Week,
   getImports,
+  groupPeriods,
   importId,
-  importedWeek,
-  mergedWeek,
+  importIdForGlobal,
+  importIdForPeriod,
+  latestGroupPeriod,
+  previousGroupPeriod,
+  resetImports,
   saveImport,
+  saveImports,
+  shortioWeek,
 } from './store';
 
 /**
@@ -39,13 +48,33 @@ export interface SourceMeta {
 }
 
 export const SOURCE_META: Record<ImportSource, SourceMeta> = {
+  whatsapp: {
+    source: 'whatsapp',
+    label: 'WhatsApp',
+    fileDescription: 'Chat export, with or without media (.zip or .txt)',
+    accept: '.zip,.txt,text/plain,application/zip',
+    extensions: ['.zip', '.txt'],
+    provides:
+      'Total members, growth, activity level, messages, active chatters, top voices, topics, ' +
+      'sentiment, and an AI-generated status tag/summary/narrative for the latest week',
+    steps: [
+      "Open this group in WhatsApp, tap the group name to open Group info.",
+      'Scroll down and tap Export chat, then choose either Include media or Without media — both work.',
+      'Save or share the .zip (or .txt) file to somewhere you can upload it from.',
+      "Upload the WHOLE file every time, not a trimmed one-week slice — it's the group's " +
+        'full history, and every figure here is recomputed from scratch from all of it. ' +
+        "With media, only the chat text inside the .zip is read — photos, videos and voice " +
+        'notes are ignored and never leave the archive. There is no week picker: uploading ' +
+        'fills in every week the export covers.',
+    ],
+  },
   shortio: {
     source: 'shortio',
     label: 'Short.io',
     fileDescription: 'Statistics workbook (.xlsx)',
     accept: '.xlsx',
     extensions: ['.xlsx'],
-    provides: 'Total link clicks, and clicks per link path',
+    provides: "Community #2's total link clicks, and clicks per link path",
     steps: [
       'Open short.io and sign in, then go to Statistics in the left sidebar.',
       'Set the date range to the Monday–Sunday week you are reporting on.',
@@ -61,7 +90,7 @@ export const SOURCE_META: Record<ImportSource, SourceMeta> = {
     fileDescription: 'Reports snapshot (.csv)',
     accept: '.csv,text/csv',
     extensions: ['.csv'],
-    provides: 'Active users, new users and sessions',
+    provides: "Landing page traffic — active users, new users and sessions. Not community data: this describes the website, not either WhatsApp community.",
     steps: [
       'Open analytics.google.com and pick the right property.',
       'Go to Reports → Reports snapshot (the first item under Reports).',
@@ -73,8 +102,8 @@ export const SOURCE_META: Record<ImportSource, SourceMeta> = {
   },
 };
 
-export const IMPORT_SOURCES: ImportSource[] = ['shortio', 'ga4'];
+export const IMPORT_SOURCES: ImportSource[] = ['shortio', 'ga4', 'whatsapp'];
 
 export function isImportSource(value: unknown): value is ImportSource {
-  return value === 'shortio' || value === 'ga4';
+  return value === 'shortio' || value === 'ga4' || value === 'whatsapp';
 }

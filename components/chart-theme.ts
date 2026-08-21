@@ -2,24 +2,19 @@
  * Chart tokens. These mirror the CSS custom properties in app/globals.css —
  * Recharts needs literal values, so they are duplicated here deliberately.
  *
- * Contrast against the white chart surface, measured not eyeballed:
- *   ACCENT  #ed3a56 → 3.93:1   (clears the 3:1 floor for data marks)
- *   CONTEXT #8d94a1 → 3.05:1   (recessive, still clears 3:1)
- *   GRID    #e8e9eb → 1.21:1   (gridlines are not data marks; exempt)
- *
- * There is exactly one accent hue. Multi-series charts therefore carry identity
- * with position + direct end labels + a legend, never with extra hues: the
- * focused series is ACCENT, every other series is CONTEXT. See MultiGroupTrend.
+ * There is exactly one accent hue (the report's red). Multi-series charts
+ * carry identity with position + direct end labels + a legend, never with
+ * extra hues: the focused series is ACCENT, every other series is CONTEXT.
  */
 
 export const CHART = {
-  ACCENT: '#ed3a56',
-  ACCENT_INK: '#c22740',
-  CONTEXT: '#8d94a1',
-  GRID: '#e8e9eb',
-  AXIS_TEXT: '#6b7280',
+  ACCENT: '#e10600',
+  ACCENT_INK: '#a80500',
+  CONTEXT: '#9b948c',
+  GRID: '#eae6e1',
+  AXIS_TEXT: '#6b6560',
   SURFACE: '#ffffff',
-  INK: '#0a0a0a',
+  INK: '#1a1a1a',
 
   /** 2px lines, round caps. */
   LINE_WIDTH: 2,

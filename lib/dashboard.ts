@@ -1,147 +1,133 @@
-import { COMMUNITIES, COMMUNITY_SLUGS, groupsOf } from './groups';
-import { getEntries, isShowingDemoEntries } from './store';
-import { getLeads } from './leads';
-import { getImports, importedWeek, mergedWeek } from './imports';
-import {
-  buildGroupSeries,
-  buildGroupWeekMetrics,
-  latestWeekWithData,
-  pct,
-  trendWeeks,
-} from './metrics';
-import { currentWeekStart, lastNWeeks } from './weeks';
+import { COMMUNITIES, groupsOf } from './groups';
+import { ga4Week, getImports, latestGroupPeriod, previousGroupPeriod, shortioWeek } from './imports';
+import { buildGroupPeriodMetrics } from './metrics';
+import { currentWeekStart, lastNWeeks, parseISODate, weekStartOf } from './weeks';
 import type {
   CommunitySlug,
+  Ga4Figures,
+  GroupPeriodMetrics,
   GroupSlug,
-  Lead,
-  MemberSourceKey,
-  NewMembersBySource,
-  GroupWeekMetrics,
   ImportedFile,
-  ImportedWeek,
-  MetricKey,
   RollupTotals,
-  TrendRow,
-  WeeklyEntry,
+  ShortioFigures,
 } from './types';
-import { MEMBER_SOURCE_KEYS, MEMBER_SOURCE_LABELS } from './types';
 
 /**
- * One loader shared by every page: manual weekly entries plus every imported
- * file, assembled into the week being displayed and a trailing trend window.
+ * One loader shared by every page: every imported file, assembled into the
+ * current-period metrics for every WhatsApp group plus (for the Landing
+ * page & WADL page only) the GA4/Short.io week being displayed.
  *
- * Loading is deliberately NOT scoped to a community — it always covers every
- * group in every community, and pages slice it. That keeps the merged roll-up a
- * filter rather than a second data path, so a community can never be silently
- * missing from a combined total.
+ * WhatsApp reports are keyed by a manually-entered date range per group, not
+ * by a shared "displayed week" — each group simply shows its own most
+ * recently filed period, independent of every other group. GA4/Short.io are
+ * untouched and stay on the original Monday-anchored week system.
  */
 
 export const TREND_WINDOW = 8;
 
 export interface DashboardData {
-  entries: WeeklyEntry[];
   /** Every uploaded file, newest first. */
   imports: ImportedFile[];
-  /** Every hand-entered lead. Personal data — see lib/leads.ts. */
-  leads: Lead[];
-  /** The week every "this week" figure refers to. */
+  /** GA4/Short.io only: the week every "this week" figure on the Landing page & WADL refers to. */
   displayWeek: string;
-  /** Trailing window ending at displayWeek, oldest first. */
+  /** GA4/Short.io only: trailing window ending at displayWeek, oldest first. */
   weeks: string[];
-  /** Current-week metrics for every group in every community. */
-  perGroup: GroupWeekMetrics[];
-  /** True when weekly entries are demo seed data rather than saved entries. */
-  demoEntries: boolean;
+  /** Each group's most recently filed WhatsApp report period. */
+  perGroup: GroupPeriodMetrics[];
 }
 
-export async function loadDashboard(): Promise<DashboardData> {
+/**
+ * `weekOverride` only affects the Landing page & WADL's GA4/Short.io figures
+ * (via the `?week=` query param there) — WhatsApp-derived data ignores it
+ * entirely, since each group's report period is set manually per upload,
+ * not selected from a shared week picker.
+ */
+export async function loadDashboard(weekOverride?: string | null): Promise<DashboardData> {
   const thisWeek = currentWeekStart();
-  const [entries, imports, leads] = await Promise.all([
-    getEntries(),
-    getImports(),
-    getLeads(),
-  ]);
+  const imports = await getImports();
 
-  // Show the current week once it has entries; otherwise fall back to the most
-  // recent week that does, so the dashboard is never a grid of dashes.
-  const hasCurrentWeek = entries.some((e) => e.weekStart === thisWeek);
-  const displayWeek = hasCurrentWeek ? thisWeek : latestWeekWithData(entries, thisWeek);
+  let displayWeek: string;
+  if (weekOverride && /^\d{4}-\d{2}-\d{2}$/.test(weekOverride)) {
+    displayWeek = weekStartOf(parseISODate(weekOverride));
+  } else {
+    const nonWhatsappWeeks = [
+      ...new Set(
+        imports.filter((f) => f.source !== 'whatsapp' && f.weekStart).map((f) => f.weekStart!),
+      ),
+    ];
+    const hasCurrentWeek = nonWhatsappWeeks.includes(thisWeek);
+    displayWeek = hasCurrentWeek
+      ? thisWeek
+      : nonWhatsappWeeks.reduce((latest, w) => (w > latest ? w : latest), thisWeek);
+  }
+
+  const perGroup = COMMUNITIES.flatMap((c) => c.groups).map((g) => {
+    const latest = latestGroupPeriod(imports, g.slug);
+    const previous = latest?.periodStart
+      ? previousGroupPeriod(imports, g.slug, latest.periodStart)
+      : null;
+    return buildGroupPeriodMetrics(g.slug, latest, previous);
+  });
 
   return {
-    entries,
     imports,
-    leads,
     displayWeek,
-    weeks: trendWeeks(displayWeek, TREND_WINDOW),
-    perGroup: COMMUNITIES.flatMap((c) => c.groups).map((g) =>
-      buildGroupWeekMetrics(g.slug, displayWeek, entries),
-    ),
-    demoEntries: isShowingDemoEntries(),
+    weeks: lastNWeeks(TREND_WINDOW, displayWeek),
+    perGroup,
   };
 }
 
-/** Current-week metrics for one community's groups, in display order. */
+/** Current metrics for one community's groups, in display order. */
 export function groupsInCommunity(
   data: DashboardData,
   community: CommunitySlug,
-): GroupWeekMetrics[] {
+): GroupPeriodMetrics[] {
   const order = groupsOf(community).map((g) => g.slug);
   return order
     .map((slug) => data.perGroup.find((m) => m.group === slug))
-    .filter((m): m is GroupWeekMetrics => m !== undefined);
+    .filter((m): m is GroupPeriodMetrics => m !== undefined);
 }
 
-/** The trailing series for one group, oldest week first. */
-export function groupSeries(
-  data: DashboardData,
-  group: GroupSlug,
-  weeks: string[] = data.weeks,
-): GroupWeekMetrics[] {
-  return buildGroupSeries(group, weeks, data.entries);
+/** Every filed period for one group, oldest first — for the group page's membership trend. */
+export function groupPeriodSeries(data: DashboardData, group: GroupSlug): GroupPeriodMetrics[] {
+  const periods = data.imports
+    .filter((f) => f.source === 'whatsapp' && f.group === group && f.periodStart)
+    .sort((a, b) => (a.periodStart! < b.periodStart! ? -1 : 1));
+  return periods.map((_, i) =>
+    buildGroupPeriodMetrics(group, periods[i], periods[i - 1] ?? null),
+  );
 }
 
-/** Weeks offered in the entry form: this week plus the previous 7, newest first. */
+/** Weeks offered in the Short.io/GA4 upload panels: this week plus the previous 7, newest first. */
 export function entryWeekOptions(count = TREND_WINDOW): string[] {
   return [...lastNWeeks(count, currentWeekStart())].reverse();
 }
 
 /* --------------------------------------------------------- roll-ups & series */
 
-/**
- * Pooled totals over any set of groups.
- *
- * Rates are computed from summed numerators and denominators, not by averaging
- * percentages — averaging would weight a 274-member group the same as an
- * 1,130-member one, and would be wrong again when pooling two communities of
- * very different sizes.
- */
-export function rollup(metrics: GroupWeekMetrics[]): RollupTotals {
-  const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
-  const newMembers = metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0);
-  const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
-  const dmsSent = metrics.reduce((s, m) => s + m.dmsSent, 0);
-  const dmReplies = metrics.reduce((s, m) => s + m.dmReplies, 0);
-
+/** Pooled totals over any set of groups — every count simply sums. */
+export function rollup(metrics: GroupPeriodMetrics[]): RollupTotals {
   return {
-    members,
-    newMembers,
-    pollResponseRatePct: pct(responses, members),
-    dmReplyRatePct: pct(dmReplies, dmsSent),
-    groupsWithEntry: metrics.filter((m) => m.entry !== null).length,
+    members: metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0),
+    newMembers: metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0),
+    messageCount: metrics.reduce((s, m) => s + (m.messageCount ?? 0), 0),
+    // Sum of each group's own unique-chatter count — an upper bound, not a
+    // true cross-group union (raw sender identities aren't kept once a
+    // group's figures are computed and persisted).
+    uniqueActiveChatters: metrics.reduce((s, m) => s + (m.uniqueActiveChatters ?? 0), 0),
+    previousMembers: metrics.reduce((s, m) => s + (m.previousTotalMembers ?? 0), 0),
+    groupsWithEntry: metrics.filter((m) => m.hasWhatsapp).length,
     groupCount: metrics.length,
   };
 }
 
 /** Pooled totals for one community. */
-export function communityTotals(
-  data: DashboardData,
-  community: CommunitySlug,
-): RollupTotals {
+export function communityTotals(data: DashboardData, community: CommunitySlug): RollupTotals {
   return rollup(groupsInCommunity(data, community));
 }
 
-/** Pooled totals across every community — the merged view's headline figures. */
-export function mergedTotals(data: DashboardData): RollupTotals {
+/** Pooled totals across every community — the Overview page's headline figures. */
+export function allCommunitiesTotals(data: DashboardData): RollupTotals {
   return rollup(data.perGroup);
 }
 
@@ -149,255 +135,167 @@ export function mergedTotals(data: DashboardData): RollupTotals {
 export function perCommunityTotals(
   data: DashboardData,
 ): { community: CommunitySlug; totals: RollupTotals }[] {
-  return COMMUNITIES.map((c) => ({
-    community: c.slug,
-    totals: communityTotals(data, c.slug),
-  }));
-}
-
-/** Rows shaped for the multi-series charts: one row per week, one key per group. */
-export function multiGroupRows(
-  data: DashboardData,
-  metric: MetricKey,
-  groups: GroupSlug[],
-  weeks: string[] = data.weeks,
-): TrendRow[] {
-  const seriesByGroup = new Map<GroupSlug, GroupWeekMetrics[]>();
-  for (const slug of groups) {
-    seriesByGroup.set(slug, groupSeries(data, slug, weeks));
-  }
-
-  return weeks.map((week, index) => {
-    const row: TrendRow = { week };
-    for (const slug of groups) {
-      const metrics = seriesByGroup.get(slug)?.[index];
-      row[slug] = metrics ? metricOf(metrics, metric) : null;
-    }
-    return row;
-  });
+  return COMMUNITIES.map((c) => ({ community: c.slug, totals: communityTotals(data, c.slug) }));
 }
 
 /**
- * Rows for the merged view's trend chart: one series per community, each the
- * pooled value of its groups for that week.
+ * The widest date range covered by any group's latest filed period — the
+ * closest thing to "the period" for the Overview page, which pools groups
+ * that may each be on their own independently-filed range. Null when
+ * nothing has been filed anywhere yet.
  */
-export function multiCommunityRows(
-  data: DashboardData,
-  metric: MetricKey,
-  weeks: string[] = data.weeks,
-): TrendRow[] {
-  const seriesByCommunity = new Map<CommunitySlug, GroupWeekMetrics[][]>();
+export function overallPeriodRange(data: DashboardData): { start: string; end: string } | null {
+  const withData = data.perGroup.filter((m) => m.periodStart && m.periodEnd);
+  if (withData.length === 0) return null;
+  const start = withData.reduce((min, m) => (m.periodStart! < min ? m.periodStart! : min), withData[0].periodStart!);
+  const end = withData.reduce((max, m) => (m.periodEnd! > max ? m.periodEnd! : max), withData[0].periodEnd!);
+  return { start, end };
+}
+
+/** This community's busiest and quietest group by message count this period, if any have data. */
+export function activityExtremes(
+  metrics: GroupPeriodMetrics[],
+): { busiest: GroupPeriodMetrics | null; quietest: GroupPeriodMetrics | null } {
+  const withMessages = metrics.filter((m) => m.messageCount !== null);
+  if (withMessages.length === 0) return { busiest: null, quietest: null };
+  const sorted = [...withMessages].sort((a, b) => (b.messageCount ?? 0) - (a.messageCount ?? 0));
+  return { busiest: sorted[0], quietest: sorted[sorted.length - 1] };
+}
+
+export interface Takeaway {
+  tag: string;
+  text: string;
+  tone: 'good' | 'neutral';
+}
+
+/**
+ * Local, non-LLM "Headline Takeaways" for the Overview page: an activity
+ * turnaround (Low → High vs. the previous filed period), the busiest
+ * community, and any newly-small community worth flagging. Deliberately not
+ * a Groq call — this runs on every page load, and a live LLM call per visit
+ * would burn through the free tier's daily cap fast. A richer, Groq-written
+ * version is available on demand via the "Regenerate" action — see
+ * lib/ai/groq.ts and app/api/ai/overview-takeaways/route.ts.
+ */
+export function headlineTakeaways(data: DashboardData): Takeaway[] {
+  const takeaways: Takeaway[] = [];
+
   for (const community of COMMUNITIES) {
-    seriesByCommunity.set(
-      community.slug,
-      community.groups.map((g) => groupSeries(data, g.slug, weeks)),
-    );
+    for (const group of groupsOf(community.slug)) {
+      const current = data.perGroup.find((m) => m.group === group.slug);
+      if (current?.activityLevel === 'High') {
+        const prevSeries = groupPeriodSeries(data, group.slug);
+        const previous = prevSeries[prevSeries.length - 2];
+        if (previous?.activityLevel === 'Low') {
+          takeaways.push({
+            tag: 'Turnaround',
+            text: `${group.label} (${community.label}) swung from Low to High activity this period.`,
+            tone: 'good',
+          });
+        }
+      }
+    }
   }
 
-  return weeks.map((week, index) => {
-    const row: TrendRow = { week };
-    for (const community of COMMUNITIES) {
-      const weekMetrics = (seriesByCommunity.get(community.slug) ?? [])
-        .map((series) => series[index])
-        .filter((m): m is GroupWeekMetrics => m !== undefined);
-      row[community.slug] = pooledMetric(weekMetrics, metric);
-    }
-    return row;
-  });
-}
-
-/**
- * One pooled value for a set of groups in a single week. Counts sum; rates are
- * recomputed from their own numerators and denominators rather than averaged.
- */
-function pooledMetric(metrics: GroupWeekMetrics[], key: MetricKey): number | null {
-  if (metrics.length === 0) return null;
-
-  switch (key) {
-    case 'totalMembers':
-    case 'newMembers': {
-      const values = metrics
-        .map((m) => metricOf(m, key))
-        .filter((v): v is number => v !== null);
-      return values.length === 0 ? null : values.reduce((s, v) => s + v, 0);
-    }
-    case 'memberGrowthPct': {
-      // Growth over the pooled base, not the mean of five growth rates.
-      const withPrev = metrics.filter((m) => m.previousEntry !== null && m.entry !== null);
-      if (withPrev.length === 0) return null;
-      const base = withPrev.reduce((s, m) => s + (m.previousEntry?.totalMembers ?? 0), 0);
-      const added = withPrev.reduce(
-        (s, m) => s + ((m.entry?.totalMembers ?? 0) - (m.previousEntry?.totalMembers ?? 0)),
-        0,
-      );
-      return pct(added, base);
-    }
-    case 'pollResponseRatePct': {
-      const responses = metrics.reduce((s, m) => s + m.pollResponses, 0);
-      const members = metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0);
-      return pct(responses, members);
-    }
-    case 'dmReplyRatePct': {
-      const replies = metrics.reduce((s, m) => s + m.dmReplies, 0);
-      const sent = metrics.reduce((s, m) => s + m.dmsSent, 0);
-      return pct(replies, sent);
-    }
-    default:
-      return null;
+  const byCommunity = perCommunityTotals(data).filter((c) => c.totals.groupsWithEntry > 0);
+  const busiest = [...byCommunity].sort((a, b) => b.totals.messageCount - a.totals.messageCount)[0];
+  if (busiest) {
+    const config = COMMUNITIES.find((c) => c.slug === busiest.community);
+    takeaways.push({
+      tag: 'Most active',
+      text: `${config?.label ?? busiest.community} led every community this period with ` +
+        `${busiest.totals.messageCount.toLocaleString('en-US')} messages.`,
+      tone: 'neutral',
+    });
   }
-}
 
-function metricOf(m: GroupWeekMetrics, key: MetricKey): number | null {
-  switch (key) {
-    case 'totalMembers':
-      return m.totalMembers;
-    case 'newMembers':
-      return m.newMembers;
-    case 'memberGrowthPct':
-      return m.memberGrowthPct;
-    case 'pollResponseRatePct':
-      return m.pollResponseRatePct;
-    case 'dmReplyRatePct':
-      return m.dmReplyRatePct;
-    default:
-      return null;
+  const smallest = [...byCommunity].sort((a, b) => a.totals.members - b.totals.members)[0];
+  if (smallest && byCommunity.length > 1 && smallest.totals.members < 1000) {
+    const config = COMMUNITIES.find((c) => c.slug === smallest.community);
+    takeaways.push({
+      tag: 'New & small',
+      text: `${config?.label ?? smallest.community} is still building, at ` +
+        `${smallest.totals.members.toLocaleString('en-US')} members.`,
+      tone: 'neutral',
+    });
   }
+
+  return takeaways.slice(0, 4);
 }
 
 /* ------------------------------------------------------- imported figures -- */
 
-/** The imported figures for one community and the displayed week. */
-export function communityImported(
-  data: DashboardData,
-  community: CommunitySlug,
-  weekStart: string = data.displayWeek,
-): ImportedWeek {
-  return importedWeek(data.imports, community, weekStart);
-}
-
-/** The same, pooled across every community — the merged view. */
-export function mergedImported(
-  data: DashboardData,
-  weekStart: string = data.displayWeek,
-): ImportedWeek {
-  return mergedWeek(data.imports, COMMUNITY_SLUGS, weekStart);
-}
-
 /**
- * One imported figure across the trend window, oldest week first.
- *
- * A week with no upload is null, not zero, so a gap in the weekly routine shows
- * as a break in the line rather than as traffic collapsing to nothing.
+ * Landing-page GA4 figures for the displayed week. Deliberately NOT
+ * community-scoped or pooled across communities — GA4 describes the
+ * website's traffic, not any WhatsApp community's, so there is exactly one
+ * of these, ever, not one per community summed together.
  */
-export function importedSeries(
+export function landingPageGa4(
   data: DashboardData,
-  community: CommunitySlug | 'merged',
-  pick: (week: ImportedWeek) => number | null,
+  weekStart: string = data.displayWeek,
+): Ga4Figures | null {
+  return ga4Week(data.imports, weekStart);
+}
+
+/** One GA4 figure across the trend window, oldest week first. */
+export function ga4Series(
+  data: DashboardData,
+  pick: (figures: Ga4Figures | null) => number | null,
   weeks: string[] = data.weeks,
 ): { week: string; value: number | null }[] {
-  return weeks.map((week) => ({
-    week,
-    value: pick(
-      community === 'merged'
-        ? mergedWeek(data.imports, COMMUNITY_SLUGS, week)
-        : importedWeek(data.imports, community, week),
-    ),
-  }));
+  return weeks.map((week) => ({ week, value: pick(ga4Week(data.imports, week)) }));
 }
 
-/** The four imported headline figures, in display order. */
-export const IMPORTED_FIGURES: {
+/** The three GA4 headline figures, in display order. */
+export const GA4_FIGURES: {
   key: string;
   label: string;
   hint: string;
-  pick: (week: ImportedWeek) => number | null;
+  pick: (figures: Ga4Figures | null) => number | null;
 }[] = [
   {
     key: 'activeUsers',
     label: 'Active users',
-    hint: 'GA4 · this week',
-    pick: (w) => w.ga4?.activeUsers ?? null,
+    hint: 'GA4 · landing page · this week',
+    pick: (g) => g?.activeUsers ?? null,
   },
   {
     key: 'newUsers',
     label: 'New users',
-    hint: 'GA4 · this week',
-    pick: (w) => w.ga4?.newUsers ?? null,
+    hint: 'GA4 · landing page · this week',
+    pick: (g) => g?.newUsers ?? null,
   },
   {
     key: 'sessions',
     label: 'Sessions',
-    hint: 'GA4 · source/medium',
-    pick: (w) => w.ga4?.sessions ?? null,
-  },
-  {
-    key: 'clicks',
-    label: 'Link clicks',
-    hint: 'Short.io · this week',
-    pick: (w) => w.shortio?.totalClicks ?? null,
+    hint: 'GA4 · landing page · source/medium',
+    pick: (g) => g?.sessions ?? null,
   },
 ];
 
-/* --------------------------------------------------- new members by source -- */
-
 /**
- * The source split for a set of groups in one week, summed.
- *
- * A source stays null unless at least one group in scope entered it, so a
- * community where nobody tracked the split shows nothing rather than three zeros.
+ * Community #2's Short.io figures for the displayed week — Short.io is
+ * specifically Community #2's own link data, not a shared/generic source, so
+ * this is never pooled with anything else.
  */
-export function sourceSplitFor(
-  entries: WeeklyEntry[],
-  groups: GroupSlug[],
-  weekStart: string,
-): NewMembersBySource {
-  const inScope = new Set(groups);
-  const weekEntries = entries.filter(
-    (e) => inScope.has(e.group) && e.weekStart === weekStart,
-  );
-
-  const out = {} as NewMembersBySource;
-  for (const key of MEMBER_SOURCE_KEYS) {
-    const values = weekEntries
-      .map((e) => e.newMembersBySource[key])
-      .filter((v): v is number => v !== null);
-    out[key] = values.length === 0 ? null : values.reduce((sum, v) => sum + v, 0);
-  }
-  return out;
+export function communityShortio(
+  data: DashboardData,
+  community: CommunitySlug,
+  weekStart: string = data.displayWeek,
+): ShortioFigures | null {
+  return shortioWeek(data.imports, community, weekStart);
 }
 
-/** Chart rows for the source split over a window: one row per week, one key per source. */
-export function sourceSplitRows(
+/** One Short.io figure across the trend window, oldest week first. */
+export function shortioSeries(
   data: DashboardData,
-  groups: GroupSlug[],
-  weeks: string[] = data.weeks,
-): TrendRow[] {
-  return weeks.map((week) => {
-    const split = sourceSplitFor(data.entries, groups, week);
-    const row: TrendRow = { week };
-    for (const key of MEMBER_SOURCE_KEYS) row[key] = split[key];
-    return row;
-  });
-}
-
-/** Series descriptors for the source-split chart, in display order. */
-export const SOURCE_SERIES: { key: MemberSourceKey; label: string }[] =
-  MEMBER_SOURCE_KEYS.map((key) => ({ key, label: MEMBER_SOURCE_LABELS[key] }));
-
-/**
- * Pooled new members per week for a set of groups — the manual growth series that
- * sits alongside the imported clicks and sessions.
- */
-export function newMembersPerWeek(
-  data: DashboardData,
-  groups: GroupSlug[],
+  community: CommunitySlug,
+  pick: (figures: ShortioFigures | null) => number | null,
   weeks: string[] = data.weeks,
 ): { week: string; value: number | null }[] {
-  const seriesByGroup = groups.map((slug) => groupSeries(data, slug, weeks));
-  return weeks.map((week, index) => {
-    const values = seriesByGroup
-      .map((series) => series[index]?.newMembers)
-      .filter((v): v is number => v !== null && v !== undefined);
-    return { week, value: values.length === 0 ? null : values.reduce((s, v) => s + v, 0) };
-  });
+  return weeks.map((week) => ({
+    week,
+    value: pick(shortioWeek(data.imports, community, week)),
+  }));
 }

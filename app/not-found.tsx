@@ -34,11 +34,11 @@ export default function NotFound() {
       ))}
 
       <div className="sectionTitle" style={{ marginTop: 0 }}>
-        Merged
+        Landing page &amp; WADL
       </div>
       <div className="row">
         <Link href="/merged" className="btn btn--sm btn--primary">
-          Combined report
+          Landing page &amp; WADL
         </Link>
       </div>
     </div>

@@ -1,13 +1,6 @@
-import type {
-  GroupSlug,
-  GroupWeekMetrics,
-  MetricKey,
-  Poll,
-  PollHistoryRow,
-  WeeklyEntry,
-} from './types';
+import type { GroupPeriodMetrics, GroupSlug, ImportedFile } from './types';
+import { emptySentiment } from './types';
 import { getGroup } from './groups';
-import { lastNWeeks, previousWeek } from './weeks';
 
 /**
  * Every derived number in the dashboard is computed here. Nothing in this file
@@ -21,194 +14,56 @@ export function pct(numerator: number, denominator: number | null | undefined): 
   return (numerator / denominator) * 100;
 }
 
-export function pollResponses(polls: Poll[]): number {
-  return polls.reduce(
-    (sum, poll) => sum + poll.options.reduce((s, o) => s + o.count, 0),
-    0,
-  );
-}
-
-export function topOption(poll: Poll): { label: string; count: number } {
-  if (poll.options.length === 0) return { label: '—', count: 0 };
-  return poll.options.reduce((best, o) => (o.count > best.count ? o : best), poll.options[0]);
-}
-
-/**
- * New members for a week: the explicit override if the user typed one,
- * otherwise the delta against the previous week's total.
- */
-export function newMembersFor(
-  entry: WeeklyEntry | null,
-  previous: WeeklyEntry | null,
-): number | null {
-  if (!entry) return null;
-  if (entry.newMembersOverride !== null && entry.newMembersOverride !== undefined) {
-    return entry.newMembersOverride;
-  }
-  if (!previous) return null;
-  return entry.totalMembers - previous.totalMembers;
-}
-
 /* --------------------------------------------------------- the main assembler */
 
-/** Manual entries plus the rates derived from them, for one group and one week. */
-export function buildGroupWeekMetrics(
+/**
+ * Everything auto-computed for one group's latest filed report period, plus
+ * the comparison against whatever period was filed immediately before it.
+ * `latest`/`previous` are this group's own `ImportedFile` rows (WhatsApp
+ * source only) — already picked out by the caller (see lib/dashboard.ts).
+ */
+export function buildGroupPeriodMetrics(
   group: GroupSlug,
-  weekStart: string,
-  entries: WeeklyEntry[],
-): GroupWeekMetrics {
-  const forGroup = entries.filter((e) => e.group === group);
-  const entry = forGroup.find((e) => e.weekStart === weekStart) ?? null;
-  // The most recent earlier week that actually has an entry — not strictly
-  // weekStart-1, so a skipped week doesn't wipe out the growth figure.
-  const prev =
-    [...forGroup]
-      .filter((e) => e.weekStart < weekStart)
-      .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))[0] ?? null;
+  latest: ImportedFile | null,
+  previous: ImportedFile | null,
+): GroupPeriodMetrics {
+  const whatsapp = latest?.whatsapp ?? null;
+  const prevWhatsapp = previous?.whatsapp ?? null;
 
-  const responses = entry ? pollResponses(entry.polls) : 0;
-  const newMembers = newMembersFor(entry, prev);
+  const totalMembers = whatsapp?.totalMembers ?? null;
+  const previousTotalMembers = prevWhatsapp?.totalMembers ?? null;
 
   return {
     group,
     community: getGroup(group)?.community ?? 'community-1',
-    weekStart,
-    entry,
-    previousEntry: prev,
+    periodStart: latest?.periodStart ?? null,
+    periodEnd: latest?.periodEnd ?? null,
+    hasWhatsapp: whatsapp !== null,
 
-    totalMembers: entry?.totalMembers ?? null,
-    newMembers,
+    totalMembers,
+    newMembers: whatsapp?.newMembers ?? null,
     memberGrowthPct:
-      entry && prev && prev.totalMembers > 0
-        ? ((entry.totalMembers - prev.totalMembers) / prev.totalMembers) * 100
+      totalMembers !== null && previousTotalMembers !== null && previousTotalMembers > 0
+        ? ((totalMembers - previousTotalMembers) / previousTotalMembers) * 100
         : null,
+    previousTotalMembers,
+    previousPeriodStart: previous?.periodStart ?? null,
+    previousPeriodEnd: previous?.periodEnd ?? null,
 
-    pollResponses: responses,
-    pollCount: entry?.polls.length ?? 0,
-    pollResponseRatePct: entry ? pct(responses, entry.totalMembers) : null,
+    messageCount: whatsapp?.messageCount ?? null,
+    uniqueActiveChatters: whatsapp?.uniqueActiveChatters ?? null,
+    topVoices: whatsapp?.topVoices ?? [],
 
-    dmsSent: entry?.dmsSent ?? 0,
-    dmReplies: entry?.dmReplies ?? 0,
-    dmReplyRatePct: entry ? pct(entry.dmReplies, entry.dmsSent) : null,
+    activityLevel: whatsapp?.activityLevel ?? null,
+    mainTopics: whatsapp?.mainTopics ?? [],
+    topTopicMentions: whatsapp?.topTopicMentions ?? null,
+    sentiment: whatsapp?.sentiment ?? emptySentiment(),
 
-    activityLevel: entry?.activityLevel ?? null,
-    notes: entry?.notes ?? '',
+    aiSummary: latest?.aiSummary ?? null,
   };
 }
 
-/** The same metrics across a window of weeks, oldest first. */
-export function buildGroupSeries(
-  group: GroupSlug,
-  weeks: string[],
-  entries: WeeklyEntry[],
-): GroupWeekMetrics[] {
-  return weeks.map((week) => buildGroupWeekMetrics(group, week, entries));
-}
-
-/** Poll history for a group, newest week first, one row per poll. */
-export function buildPollHistory(entries: WeeklyEntry[], group: GroupSlug): PollHistoryRow[] {
-  return entries
-    .filter((e) => e.group === group)
-    .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))
-    .flatMap((entry) =>
-      entry.polls.map((poll) => {
-        const responses = poll.options.reduce((s, o) => s + o.count, 0);
-        const top = topOption(poll);
-        return {
-          weekStart: entry.weekStart,
-          question: poll.question,
-          responses,
-          topAnswer: top.label,
-          topAnswerCount: top.count,
-          responseRatePct: pct(responses, entry.totalMembers),
-        };
-      }),
-    );
-}
-
-/**
- * The week to show by default: the most recent week that has at least one
- * entry, falling back to the current week when the store is empty.
- */
-export function latestWeekWithData(entries: WeeklyEntry[], fallback: string): string {
-  if (entries.length === 0) return fallback;
-  return entries.reduce((latest, e) => (e.weekStart > latest ? e.weekStart : latest), entries[0].weekStart);
-}
-
-/** Trailing window of weeks ending at `endWeek`. */
-export function trendWeeks(endWeek: string, count = 8): string[] {
-  return lastNWeeks(count, endWeek);
-}
-
-export { previousWeek };
-
-/* ------------------------------------------------------ metric presentation */
-
-export interface MetricDef {
-  key: MetricKey;
-  label: string;
-  shortLabel: string;
-  unit: 'count' | 'percent';
-  /** How to describe the number in a tooltip or axis. */
-  description: string;
-}
-
-export const METRIC_DEFS: MetricDef[] = [
-  {
-    key: 'totalMembers',
-    label: 'Total members',
-    shortLabel: 'Members',
-    unit: 'count',
-    description: 'Group member count at the end of the week',
-  },
-  {
-    key: 'newMembers',
-    label: 'New members',
-    shortLabel: 'New members',
-    unit: 'count',
-    description: 'Members added during the week',
-  },
-  {
-    key: 'memberGrowthPct',
-    label: 'Member growth',
-    shortLabel: 'Growth %',
-    unit: 'percent',
-    description: 'Week-over-week change in member count',
-  },
-  {
-    key: 'pollResponseRatePct',
-    label: 'Poll response rate',
-    shortLabel: 'Poll rate',
-    unit: 'percent',
-    description: 'Poll responses ÷ member count',
-  },
-  {
-    key: 'dmReplyRatePct',
-    label: 'DM reply rate',
-    shortLabel: 'DM reply',
-    unit: 'percent',
-    description: 'Replies received ÷ 1:1 DMs sent',
-  },
-];
-
-export function metricValue(m: GroupWeekMetrics, key: MetricKey): number | null {
-  switch (key) {
-    case 'totalMembers':
-      return m.totalMembers;
-    case 'newMembers':
-      return m.newMembers;
-    case 'memberGrowthPct':
-      return m.memberGrowthPct;
-    case 'pollResponseRatePct':
-      return m.pollResponseRatePct;
-    case 'dmReplyRatePct':
-      return m.dmReplyRatePct;
-    default:
-      return null;
-  }
-}
-
-/* -------------------------------------------------------------- formatting */
+/* ------------------------------------------------------------- formatting */
 
 /** 1,284 · 12.9K — proportional-friendly compact counts. */
 export function formatCount(value: number | null | undefined): string {
@@ -239,10 +94,6 @@ export function formatSigned(value: number | null | undefined): string {
 export function formatSignedPercent(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
-}
-
-export function formatMetric(value: number | null, unit: 'count' | 'percent'): string {
-  return unit === 'percent' ? formatPercent(value) : formatExact(value);
 }
 
 export function formatRelativeTime(iso: string): string {

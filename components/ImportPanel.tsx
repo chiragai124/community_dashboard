@@ -30,18 +30,20 @@ export interface SourceInfo {
 
 export function ImportPanel({
   community,
-  communityLabel,
+  scopeLabel,
   weekOptions,
   defaultWeek,
   sources,
   existing,
 }: {
-  community: CommunitySlug;
-  communityLabel: string;
+  /** Omit for a source with no community — e.g. GA4, landing-page traffic. */
+  community?: CommunitySlug;
+  /** What this upload is for, in plain words: a community's label, or e.g. "the landing page". */
+  scopeLabel: string;
   weekOptions: string[];
   defaultWeek: string;
   sources: SourceInfo[];
-  /** Everything already stored for this community, any week. */
+  /** Everything already stored for this scope, any week. */
   existing: ImportedFile[];
 }) {
   return (
@@ -53,7 +55,7 @@ export function ImportPanel({
         <span className="qual__summaryLabel">Import data</span>
         <span className="qual__summaryHint">
           {sources.map((s) => s.label).join(' · ')} — upload this week’s export for{' '}
-          {communityLabel}
+          {scopeLabel}
         </span>
       </summary>
       <div className="imp__body">
@@ -79,7 +81,7 @@ function SourceRow({
   defaultWeek,
   existing,
 }: {
-  community: CommunitySlug;
+  community?: CommunitySlug;
   info: SourceInfo;
   weekOptions: string[];
   defaultWeek: string;
@@ -104,7 +106,8 @@ function SourceRow({
       const body = new FormData();
       body.set('file', file);
       body.set('source', info.source);
-      body.set('community', community);
+      // Omitted for a global source (e.g. GA4) — no community to send.
+      if (community) body.set('community', community);
       body.set('weekStart', week);
 
       const res = await fetch('/api/imports', { method: 'POST', body });

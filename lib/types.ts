@@ -1,7 +1,7 @@
 /**
  * Canonical group identifiers, across every community. Slugs are globally
- * unique, so a group always identifies exactly one community and stored entries
- * need no community column of their own.
+ * unique, so a group always identifies exactly one community and stored
+ * figures need no community column of their own.
  */
 export type GroupSlug =
   // Community #1 — destination groups
@@ -10,30 +10,41 @@ export type GroupSlug =
   | 'australia'
   | 'canada'
   | 'germany'
-  // Community #2 — amber global aspirants #2 | 2026 Intake
-  | 'aspirants-2026';
+  // Community #2 — amber global aspirants #2 | 2026 Intake — same five
+  // destinations, tracked as their own community's groups (distinct slugs:
+  // group slugs are globally unique, so Community #1's 'uk' and Community
+  // #2's 'uk' can't be the same value).
+  | 'uk-2'
+  | 'usa-2'
+  | 'australia-2'
+  | 'canada-2'
+  | 'germany-2'
+  // Community #3 — same five destinations again, distinct slugs.
+  | 'uk-3'
+  | 'usa-3'
+  | 'australia-3'
+  | 'canada-3'
+  | 'germany-3';
 
 /** Top-level communities. Each is its own report. */
-export type CommunitySlug = 'community-1' | 'community-2';
+export type CommunitySlug = 'community-1' | 'community-2' | 'community-3';
 
 /**
- * The two file-import sources. Each corresponds to one export the user
- * downloads weekly and uploads here. There are no API connections.
+ * The three file-import sources. Each corresponds to one export the user
+ * downloads and uploads here. There are no API connections other than the
+ * Groq call made server-side from an already-uploaded WhatsApp export (see
+ * lib/ai/groq.ts) — chat text is sent nowhere else.
+ *
+ * Short.io and GA4 are community-level snapshots: one file per community per
+ * week. WhatsApp is per-group and is the group's full chat history re-exported
+ * each time — see lib/imports/whatsapp.ts for why that matters.
  */
-export type ImportSource = 'shortio' | 'ga4';
+export type ImportSource = 'shortio' | 'ga4' | 'whatsapp';
 
-/** The three things the top-level switcher can select. */
-export type ScopeSlug = CommunitySlug | 'merged';
+/** The scopes the top-level nav can select: Overview, one community, or the landing page. */
+export type ScopeSlug = 'overview' | CommunitySlug | 'merged';
 
 export type ActivityLevel = 'Low' | 'Medium' | 'High';
-
-/** Seed values for demo mode. Only used when nothing real is configured. */
-export interface DemoProfile {
-  /** Member count at the start of the demo window. */
-  members: number;
-  /** Baseline weekly growth rate, e.g. 0.04 for 4%. */
-  growth: number;
-}
 
 export interface GroupConfig {
   slug: GroupSlug;
@@ -41,10 +52,9 @@ export interface GroupConfig {
   community: CommunitySlug;
   /** Full name, e.g. "United Kingdom". */
   name: string;
-  /** Short label used in the sidebar, cards and table rows. */
+  /** Short label used in the nav, cards and table rows. */
   label: string;
   flag: string;
-  demo: DemoProfile;
 }
 
 /**
@@ -55,7 +65,7 @@ export interface CommunityConfig {
   slug: CommunitySlug;
   /** Full name, shown in page headers. */
   name: string;
-  /** Short label for the sidebar switcher and table rows. */
+  /** Short label for the nav tab and table rows. */
   label: string;
   /** One line describing what the community is. */
   description: string;
@@ -76,12 +86,10 @@ export type SentimentKey = 'positive' | 'neutral' | 'negative';
 export const SENTIMENT_KEYS: SentimentKey[] = ['positive', 'neutral', 'negative'];
 
 /**
- * Hand-entered sentiment for a group-week, with example messages.
+ * Auto-computed sentiment for a group-week, with example messages.
  *
- * Percentages are stored exactly as typed and are NOT normalised to 100. If they
- * don't add up, that is either a typo or a deliberate "these are the three
- * buckets I counted, some messages fit none" — and quietly rescaling would hide
- * both. The UI shows the shortfall or overshoot instead.
+ * Percentages are NOT normalised to 100 — some messages classify to none of
+ * the three buckets, so the bar is left short rather than rescaled.
  */
 export interface SentimentBreakdown {
   positivePct: number | null;
@@ -91,100 +99,119 @@ export interface SentimentBreakdown {
   examples: Record<SentimentKey, string[]>;
 }
 
-/* --------------------------------------------------- new members by source */
-
-/**
- * Where a week's new members came from, entered by hand.
- *
- * This is typed rather than derived because it cannot be derived: Short.io
- * reports clicks and GA4 reports sessions, and neither is a join. Apportioning
- * growth by click share would invent a number that looks authoritative.
- */
-export type MemberSourceKey = 'whatsappLink' | 'landingPage' | 'other';
-
-export const MEMBER_SOURCE_KEYS: MemberSourceKey[] = [
-  'whatsappLink',
-  'landingPage',
-  'other',
-];
-
-export const MEMBER_SOURCE_LABELS: Record<MemberSourceKey, string> = {
-  whatsappLink: 'WhatsApp link',
-  landingPage: 'Landing page',
-  other: 'Organic / other',
-};
-
-/** Null per source means "not broken down", never "zero from this source". */
-export type NewMembersBySource = Record<MemberSourceKey, number | null>;
-
-/** One poll posted in a group during a week. */
-export interface Poll {
-  question: string;
-  /** option label -> response count */
-  options: PollOption[];
+/** All-null/empty sentiment, for a group-week with no WhatsApp import yet. */
+export function emptySentiment(): SentimentBreakdown {
+  return {
+    positivePct: null,
+    neutralPct: null,
+    negativePct: null,
+    examples: { positive: [], neutral: [], negative: [] },
+  };
 }
 
-export interface PollOption {
-  label: string;
+/** One person's message count within a group-week — the "top voices" list. */
+export interface Voice {
+  name: string;
   count: number;
 }
 
 /**
- * A single manual weekly entry. This is the only hand-typed data in the
- * dashboard; everything in `metrics.ts` is derived from it plus the imports.
+ * The AI-generated pieces of a group's weekly report: a short status tag, a
+ * one-line gloss on who's driving the conversation, and a narrative paragraph
+ * on what people are actually talking about. Generated server-side from that
+ * week's real chat text via Groq (see lib/ai/groq.ts) — omitted entirely when
+ * no GROQ_API_KEY is configured or the call fails, rather than faked.
  */
-export interface WeeklyEntry {
-  id: string;
-  group: GroupSlug;
-  /** ISO week start, always a Monday, as YYYY-MM-DD. */
-  weekStart: string;
+export interface AiSummary {
+  /** e.g. "Most Active", "On-topic", "Silent", "Low". */
+  statusTag: string;
+  topVoicesSummary: string;
+  narrative: string;
+  generatedAt: string;
+}
+
+/**
+ * What one week of a WhatsApp chat export contributes to one group.
+ *
+ * Every figure here is auto-computed by lib/imports/whatsapp.ts from the raw
+ * export text — nothing here is hand-typed. `totalMembers` in particular is
+ * not a snapshot value: it's the running count of every join/add minus every
+ * leave/remove in the export, replayed from the group's creation through this
+ * week's Sunday. That only works because the export is the FULL chat history,
+ * re-uploaded (and re-parsed from scratch) each time — see the module doc in
+ * whatsapp.ts.
+ */
+export interface WhatsappFigures {
   totalMembers: number;
-  /**
-   * New members this week. Optional: when omitted it is derived as the delta
-   * against the previous week's `totalMembers`.
-   */
-  newMembersOverride?: number | null;
-  polls: Poll[];
-  dmsSent: number;
-  dmReplies: number;
+  newMembers: number;
+  joinsViaLink: number;
+  joinsAdded: number;
+  leaves: number;
+  messageCount: number;
+  /** Distinct senders who posted at least one message this week. */
+  uniqueActiveChatters: number;
+  /** Top senders by message count this week, most first. */
+  topVoices: Voice[];
+  /** Relative to this group's own trailing message-volume average, not a fixed threshold. */
   activityLevel: ActivityLevel;
-  /** Why the activity level is what it is — sits beside the badge. */
-  activityNote: string;
-  /** What the week was mostly about, e.g. ['Scholarships', 'Visa process']. */
+  /** Ranked most-mentioned first — `mainTopics[0]` is the week's trending topic. */
   mainTopics: string[];
-  /** What students asked most that week, one entry per question. */
-  commonQuestions: string[];
-  /** How students responded to posted content — polls, announcements, media. */
-  contentResponse: string;
-  /** Hand-entered sentiment split and example messages. */
+  /** How many times `mainTopics[0]` was mentioned, or null when there were no topics at all. */
+  topTopicMentions: number | null;
   sentiment: SentimentBreakdown;
-  /** Where the week's new members came from. */
-  newMembersBySource: NewMembersBySource;
-  notes: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
-/** Payload accepted by POST/PUT /api/entries. */
-export interface WeeklyEntryInput {
-  group: GroupSlug;
-  weekStart: string;
-  totalMembers: number;
-  newMembersOverride?: number | null;
-  polls?: Poll[];
-  dmsSent?: number;
-  dmReplies?: number;
-  activityLevel?: ActivityLevel;
-  activityNote?: string;
-  mainTopics?: string[];
-  commonQuestions?: string[];
-  contentResponse?: string;
-  sentiment?: Partial<SentimentBreakdown>;
-  newMembersBySource?: Partial<NewMembersBySource>;
-  notes?: string;
+/**
+ * One uploaded file. Three different scopes, one per source:
+ *
+ *   - Short.io is Community #2's own link data specifically — not shared,
+ *     not generic. `community` is always `'community-2'` for this source
+ *     (enforced by `lib/groups.ts` only declaring the `shortio` capability
+ *     there). `source` + `community` + `weekStart` is its natural key.
+ *   - GA4 is landing-page traffic — it isn't anyone's community data, so
+ *     `community` is omitted entirely. `source` + `weekStart` is its natural
+ *     key (see `importIdForGlobal`).
+ *   - WhatsApp is per-group (`group` is set, `community` follows from it):
+ *     one upload of the full chat history fills in every week the export
+ *     covers, not just one — see lib/imports/whatsapp.ts and the imports API
+ *     route.
+ *
+ * Whichever scope applies, re-uploading the same export for the same week
+ * replaces that week's numbers rather than adding to them.
+ */
+export interface ImportedFile {
+  id: string;
+  source: ImportSource;
+  /** Omitted for GA4 (landing-page data, not community-scoped). */
+  community?: CommunitySlug;
+  /** Set only when source === 'whatsapp'; a group identifies its community. */
+  group?: GroupSlug;
+  /** Short.io / GA4 only: the Monday-anchored week this snapshot is filed under. */
+  weekStart?: string;
+  /**
+   * WhatsApp only: the manually-entered inclusive date range this report
+   * covers — not necessarily seven days, not necessarily Monday-aligned. The
+   * chat export itself may span a much wider history (needed to replay
+   * member totals accurately); only messages inside [periodStart, periodEnd]
+   * count toward this report's message-level figures.
+   */
+  periodStart?: string;
+  periodEnd?: string;
+  filename: string;
+  uploadedAt: string;
+  /**
+   * Where each figure was found, in plain words — which sheet, which report
+   * section, or (for WhatsApp) what the parser counted. Shown next to the
+   * numbers so any surprising value can be traced back to the file without
+   * opening it.
+   */
+  notes: string[];
+  shortio?: ShortioFigures;
+  ga4?: Ga4Figures;
+  whatsapp?: WhatsappFigures;
+  /** Set only for the most recent week of a WhatsApp upload — see the imports API route. */
+  aiSummary?: AiSummary;
 }
-
-/* --------------------------------------------------------- imported figures */
 
 /** Clicks on one tracked link, from Short.io's "Top links" sheet. */
 export interface LinkClicks {
@@ -206,141 +233,79 @@ export interface Ga4Figures {
   sessions: number | null;
 }
 
-/**
- * One uploaded file.
- *
- * `source` + `community` + `weekStart` is the natural key, so re-uploading the
- * same export for the same week replaces that week's numbers rather than adding
- * to them — upload the same file twice and nothing doubles.
- */
-export interface ImportedFile {
-  id: string;
-  source: ImportSource;
-  community: CommunitySlug;
-  /** ISO week start (Monday) the figures are filed under. */
-  weekStart: string;
-  filename: string;
-  uploadedAt: string;
-  /**
-   * Where each figure was found, in plain words — which sheet or which report
-   * section. Shown next to the numbers so any surprising value can be traced
-   * back to the file without opening it.
-   */
-  notes: string[];
-  shortio?: ShortioFigures;
-  ga4?: Ga4Figures;
-}
-
-/** The figures for one community and week, from however many files. */
-export interface ImportedWeek {
-  weekStart: string;
-  shortio: ShortioFigures | null;
-  ga4: Ga4Figures | null;
-}
-
 /* ----------------------------------------------------------- derived shapes */
 
 /** Pooled figures for a community, or for every community at once. */
 export interface RollupTotals {
   members: number;
   newMembers: number;
-  /** Responses ÷ members, pooled across the groups in scope. */
-  pollResponseRatePct: number | null;
-  /** Replies ÷ DMs sent, pooled. */
-  dmReplyRatePct: number | null;
+  messageCount: number;
+  /** Sum of each group's own unique-chatter count — an upper bound, not a true cross-group union. */
+  uniqueActiveChatters: number;
+  /**
+   * Sum of `previousTotalMembers` across groups that have one — the base the
+   * period-over-period comparison section is measured against. Only counts
+   * groups where a previous period is actually on file, so a group with no
+   * prior report doesn't silently contribute a false zero to the base.
+   */
+  previousMembers: number;
+  /** How many groups have a WhatsApp import for their current period (drives every figure above). */
   groupsWithEntry: number;
   groupCount: number;
 }
 
-/** Everything one group needs for one week. All of it manual. */
-export interface GroupWeekMetrics {
+/**
+ * Everything one group needs for its most recently filed report period —
+ * entirely auto-computed from its WhatsApp export (see
+ * lib/imports/whatsapp.ts) for the manually-entered date range it was filed
+ * under, plus an AI-generated status tag/summary/narrative (see
+ * lib/ai/groq.ts). Nothing here is hand-typed except the date range itself.
+ */
+export interface GroupPeriodMetrics {
   group: GroupSlug;
   community: CommunitySlug;
-  weekStart: string;
-  entry: WeeklyEntry | null;
-  /** Previous week's entry, when one exists. */
-  previousEntry: WeeklyEntry | null;
+  /** Null when no period has ever been filed for this group. */
+  periodStart: string | null;
+  periodEnd: string | null;
+  /** True when a WhatsApp export has been parsed for this group's latest period. */
+  hasWhatsapp: boolean;
 
   totalMembers: number | null;
   newMembers: number | null;
-  /** Week-over-week member growth, as a percentage. */
+  /** Growth vs. the previous filed period, as a percentage. */
   memberGrowthPct: number | null;
+  /** The previous period's total, when known — what memberGrowthPct is computed against. */
+  previousTotalMembers: number | null;
+  /** The previous period's own date range, when known — for "vs 5-11 Aug" style labels. */
+  previousPeriodStart: string | null;
+  previousPeriodEnd: string | null;
 
-  pollResponses: number;
-  pollCount: number;
-  /** responses / members, as a percentage. */
-  pollResponseRatePct: number | null;
+  messageCount: number | null;
+  uniqueActiveChatters: number | null;
+  topVoices: Voice[];
 
-  dmsSent: number;
-  dmReplies: number;
-  /** replies / DMs sent, as a percentage. */
-  dmReplyRatePct: number | null;
-
+  /** Auto-computed from message volume vs. this group's previous filed period. */
   activityLevel: ActivityLevel | null;
-  notes: string;
+  /** Auto-extracted from this period's messages, ranked most-mentioned first. */
+  mainTopics: string[];
+  /** How many times mainTopics[0] was mentioned — the trending-topic count. */
+  topTopicMentions: number | null;
+  /** Auto-computed sentiment split and example messages. */
+  sentiment: SentimentBreakdown;
+
+  /** Present only when Groq generated a summary for this group's latest period. */
+  aiSummary: AiSummary | null;
 }
 
-/* ----------------------------------------------------------------- leads -- */
-
-/**
- * One hand-entered lead.
- *
- * PERSONAL DATA. Name, email and phone are identifying, so these rows live only
- * in data/leads.json (gitignored) and are never sent anywhere. Nothing in the app
- * transmits them off the machine.
- */
-export interface Lead {
-  id: string;
-  /** The group that produced the lead; its community follows from the slug. */
-  group: GroupSlug;
-  name: string;
-  email: string;
-  phone: string;
-  university: string;
-  country: string;
-  /** ISO week start the lead is filed under, so "this week" is answerable. */
-  weekStart: string;
-  createdAt: string;
-}
-
-/** Payload accepted by POST /api/leads — one lead, or a pasted block of rows. */
-export interface LeadInput {
-  group: GroupSlug;
-  weekStart: string;
-  name?: string;
-  email?: string;
-  phone?: string;
-  university?: string;
-  country?: string;
-}
-
-/** One row of a leads breakdown — by university, or by country. */
-export interface LeadBreakdownRow {
-  label: string;
-  leads: number;
-  /** Share of the leads in scope, as a percentage. */
-  sharePct: number;
-}
-
-export interface PollHistoryRow {
-  weekStart: string;
-  question: string;
-  responses: number;
-  topAnswer: string;
-  topAnswerCount: number;
-  /** responses / member count that week, as a percentage. */
-  responseRatePct: number | null;
-}
-
-/** One row per week for the multi-series charts: `week` plus a key per group. */
+/** One row per x-axis category (a week, for GA4/Short.io; unused by WhatsApp charts now). */
 export interface TrendRow {
   week: string;
   [seriesKey: string]: number | string | null;
 }
 
-export type MetricKey =
-  | 'totalMembers'
-  | 'newMembers'
-  | 'memberGrowthPct'
-  | 'pollResponseRatePct'
-  | 'dmReplyRatePct';
+/** A community-level synthesis across its groups' latest periods — see lib/ai/groq.ts. */
+export interface CommunitySummary {
+  mainTopics: string[];
+  narrative: string;
+  generatedAt: string;
+}

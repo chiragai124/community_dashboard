@@ -1,79 +1,17 @@
-import { inflateRawSync } from 'node:zlib';
+import { listZipEntries, readZipEntryData } from './zip';
 
 /**
  * A minimal .xlsx reader: just enough to get cell text out of a workbook.
  *
  * An .xlsx file is a ZIP archive of XML parts. Rather than take on a
- * spreadsheet dependency for two numbers, this reads the archive directly —
- * Node's zlib provides the only hard part (DEFLATE), and the XML we need is
- * shallow enough to walk with a scanner.
+ * spreadsheet dependency for two numbers, this reads the archive directly via
+ * lib/zip.ts, and the XML we need is shallow enough to walk with a scanner.
  *
  * Deliberately narrow: it returns every cell as a trimmed string, in row order,
  * per sheet. No formulas, no styles, no dates-as-dates, no merged-cell geometry.
  * Short.io's export is a plain grid of labels and counts, which is all this has
  * to survive.
  */
-
-/* ------------------------------------------------------------------ the ZIP */
-
-interface ZipEntry {
-  name: string;
-  data: Buffer;
-}
-
-/**
- * Read a ZIP archive's entries.
- *
- * Walks the central directory backwards from the End Of Central Directory
- * record, which is the only reliable way to enumerate a ZIP — local headers can
- * carry zeroed sizes when the writer streamed the file.
- */
-function readZip(buffer: Buffer): ZipEntry[] {
-  const eocd = findEocd(buffer);
-  if (eocd === -1) throw new Error('Not a valid .xlsx file (no ZIP end record found).');
-
-  const count = buffer.readUInt16LE(eocd + 10);
-  let offset = buffer.readUInt32LE(eocd + 16);
-  const entries: ZipEntry[] = [];
-
-  for (let i = 0; i < count; i += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014b50) break; // central directory signature
-    const method = buffer.readUInt16LE(offset + 10);
-    const compressedSize = buffer.readUInt32LE(offset + 20);
-    const nameLength = buffer.readUInt16LE(offset + 28);
-    const extraLength = buffer.readUInt16LE(offset + 30);
-    const commentLength = buffer.readUInt16LE(offset + 32);
-    const localOffset = buffer.readUInt32LE(offset + 42);
-    const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
-
-    // Skip the local file header to reach the data: its own name and extra
-    // fields have their own lengths, which need not match the central copy.
-    const localNameLength = buffer.readUInt16LE(localOffset + 26);
-    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
-    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-    const raw = buffer.subarray(dataStart, dataStart + compressedSize);
-
-    if (method === 0) {
-      entries.push({ name, data: Buffer.from(raw) });
-    } else if (method === 8) {
-      entries.push({ name, data: inflateRawSync(raw) });
-    }
-    // Any other compression method is skipped: xlsx writers use store or deflate.
-
-    offset += 46 + nameLength + extraLength + commentLength;
-  }
-
-  return entries;
-}
-
-/** The EOCD record is at the end, after a comment of unknown length. */
-function findEocd(buffer: Buffer): number {
-  const min = Math.max(0, buffer.length - 66_000);
-  for (let i = buffer.length - 22; i >= min; i -= 1) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) return i;
-  }
-  return -1;
-}
 
 /* ------------------------------------------------------------------ the XML */
 
@@ -195,9 +133,15 @@ export interface XlsxSheet {
  * order still reports the right name against the right grid.
  */
 export function readXlsx(buffer: Buffer): XlsxSheet[] {
-  const entries = readZip(buffer);
-  const part = (name: string): string | undefined =>
-    entries.find((e) => e.name === name)?.data.toString('utf8');
+  const entries = listZipEntries(buffer);
+  const part = (name: string): string | undefined => {
+    const entry = entries.find((e) => e.name === name);
+    // "store or deflate" only: xlsx writers don't use other ZIP methods, and
+    // an unsupported one here just means "this part isn't readable" rather
+    // than failing the whole workbook.
+    if (!entry || (entry.method !== 0 && entry.method !== 8)) return undefined;
+    return readZipEntryData(buffer, entry).toString('utf8');
+  };
 
   const workbook = part('xl/workbook.xml');
   if (!workbook) throw new Error('Not a valid .xlsx file (no xl/workbook.xml inside).');

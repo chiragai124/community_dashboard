@@ -13,8 +13,8 @@ import type {
  * This file is the single source of truth for structure. Adding a group — or a
  * whole community — is an edit here and nowhere else.
  *
- * Group slugs are globally unique across communities, so a stored weekly entry
- * needs no community column: the group identifies it.
+ * Group slugs are globally unique across communities, so a stored WhatsApp
+ * import needs no community column: the group identifies it.
  *
  * Each community also declares which exports it can import. Imported figures are
  * community-level (one Short.io file and one GA4 file per week), so groups carry
@@ -24,87 +24,36 @@ import type {
 /* -------------------------------------------------- Community #1 — 5 groups */
 
 const COMMUNITY_1_GROUPS: GroupConfig[] = [
-  {
-    slug: 'uk',
-    community: 'community-1',
-    name: 'United Kingdom',
-    label: 'UK',
-    flag: '🇬🇧',
-    demo: {
-      members: 842,
-      growth: 0.041,
-    },
-  },
-  {
-    slug: 'usa',
-    community: 'community-1',
-    name: 'United States',
-    label: 'USA',
-    flag: '🇺🇸',
-    demo: {
-      members: 1130,
-      growth: 0.052,
-    },
-  },
-  {
-    slug: 'australia',
-    community: 'community-1',
-    name: 'Australia',
-    label: 'Australia',
-    flag: '🇦🇺',
-    demo: {
-      members: 468,
-      growth: 0.031,
-    },
-  },
-  {
-    slug: 'canada',
-    community: 'community-1',
-    name: 'Canada',
-    label: 'Canada',
-    flag: '🇨🇦',
-    demo: {
-      members: 396,
-      growth: 0.058,
-    },
-  },
-  {
-    slug: 'germany',
-    community: 'community-1',
-    name: 'Germany',
-    label: 'Germany',
-    flag: '🇩🇪',
-    demo: {
-      members: 274,
-      growth: 0.024,
-    },
-  },
+  { slug: 'uk', community: 'community-1', name: 'United Kingdom', label: 'UK', flag: '🇬🇧' },
+  { slug: 'usa', community: 'community-1', name: 'United States', label: 'USA', flag: '🇺🇸' },
+  { slug: 'australia', community: 'community-1', name: 'Australia', label: 'Australia', flag: '🇦🇺' },
+  { slug: 'canada', community: 'community-1', name: 'Canada', label: 'Canada', flag: '🇨🇦' },
+  { slug: 'germany', community: 'community-1', name: 'Germany', label: 'Germany', flag: '🇩🇪' },
 ];
 
 /* ------------------------------------------- Community #2 — 2026 intake ---- */
 
 /**
- * Community #2 is a single global cohort, so it starts with one community-wide
- * segment rather than invented subdivisions.
- *
- * TO ADD REAL SEGMENTS: copy the object below and give each a unique `slug`
- * (adding it to `GroupSlug` in lib/types.ts). Everything else — overview cards,
- * comparison table, trends, the entry form, the merged roll-up — picks them up
- * with no further changes. The Comparison page appears automatically once a
- * community has 2+ groups.
+ * Same five destinations as Community #1, tracked as Community #2's own
+ * segments — distinct slugs (`-2` suffix) since group slugs are globally
+ * unique across communities.
  */
 const COMMUNITY_2_GROUPS: GroupConfig[] = [
-  {
-    slug: 'aspirants-2026',
-    community: 'community-2',
-    name: 'Community-wide',
-    label: 'Community-wide',
-    flag: '🌍',
-    demo: {
-      members: 610,
-      growth: 0.068,
-    },
-  },
+  { slug: 'uk-2', community: 'community-2', name: 'United Kingdom', label: 'UK', flag: '🇬🇧' },
+  { slug: 'usa-2', community: 'community-2', name: 'United States', label: 'USA', flag: '🇺🇸' },
+  { slug: 'australia-2', community: 'community-2', name: 'Australia', label: 'Australia', flag: '🇦🇺' },
+  { slug: 'canada-2', community: 'community-2', name: 'Canada', label: 'Canada', flag: '🇨🇦' },
+  { slug: 'germany-2', community: 'community-2', name: 'Germany', label: 'Germany', flag: '🇩🇪' },
+];
+
+/* ------------------------------------------- Community #3 — same 5 groups -- */
+
+const COMMUNITY_3_GROUPS: GroupConfig[] = [
+  { slug: 'uk-3', community: 'community-3', name: 'United Kingdom', label: 'UK', flag: '🇬🇧' },
+  { slug: 'usa-3', community: 'community-3', name: 'United States', label: 'USA', flag: '🇺🇸' },
+  { slug: 'australia-3', community: 'community-3', name: 'Australia', label: 'Australia', flag: '🇦🇺' },
+  { slug: 'canada-3', community: 'community-3', name: 'Canada', label: 'Canada', flag: '🇨🇦' },
+  { slug: 'germany-3', community: 'community-3', name: 'Germany', label: 'Germany', flag: '🇩🇪' },
 ];
 
 /* ----------------------------------------------------------- the registry -- */
@@ -116,9 +65,10 @@ export const COMMUNITIES: CommunityConfig[] = [
     label: 'Community #1',
     description: 'UK, USA, Australia, Canada and Germany',
     groupNoun: 'Groups',
-    // Declaring a source only offers the import control. Figures appear for a
-    // week once a file has actually been uploaded for it.
-    imports: ['shortio', 'ga4'],
+    // GA4 isn't here: it's landing-page traffic, not any community's data —
+    // see LANDING_PAGE_IMPORTS below. Short.io is Community #2's specifically
+    // (its own link data), so Community #1 declares no imports of its own.
+    imports: [],
     groups: COMMUNITY_1_GROUPS,
   },
   {
@@ -126,12 +76,30 @@ export const COMMUNITIES: CommunityConfig[] = [
     // The community's own name, exactly as it is written in WhatsApp.
     name: 'amber global aspirants #2 | 2026 Intake',
     label: 'Community #2',
-    description: '2026 intake cohort, global',
+    description: 'UK, USA, Australia, Canada and Germany',
     groupNoun: 'Segments',
-    imports: ['shortio', 'ga4'],
+    // Short.io is specifically Community #2's link data — not shared or
+    // generic, and not offered on Community #1's or #3's page.
+    imports: ['shortio'],
     groups: COMMUNITY_2_GROUPS,
   },
+  {
+    slug: 'community-3',
+    name: 'Community #3',
+    label: 'Community #3',
+    description: 'UK, USA, Australia, Canada and Germany',
+    groupNoun: 'Groups',
+    imports: [],
+    groups: COMMUNITY_3_GROUPS,
+  },
 ];
+
+/**
+ * GA4 is landing-page traffic — not scoped to any community — so it isn't in
+ * any `CommunityConfig.imports` array above. This is what the Landing page &
+ * WADL page uses to render its one, unscoped GA4 panel.
+ */
+export const LANDING_PAGE_IMPORTS: ImportSource[] = ['ga4'];
 
 /** Every group across every community, in display order. */
 export const GROUPS: GroupConfig[] = COMMUNITIES.flatMap((c) => c.groups);
@@ -163,7 +131,7 @@ export function isCommunitySlug(value: unknown): value is CommunitySlug {
 }
 
 export function isScopeSlug(value: unknown): value is ScopeSlug {
-  return value === 'merged' || isCommunitySlug(value);
+  return value === 'merged' || value === 'overview' || isCommunitySlug(value);
 }
 
 /** The community a group belongs to. */
@@ -181,12 +149,12 @@ export function groupSlugsOf(community: CommunitySlug): GroupSlug[] {
   return groupsOf(community).map((g) => g.slug);
 }
 
-/** The default community — what "/" lands on. */
+/** The default community — kept for the group-detail page's breadcrumb fallback. */
 export const DEFAULT_COMMUNITY: CommunitySlug = COMMUNITIES[0].slug;
 
 /* ------------------------------------------------------ import declarations */
 
-/** The exports a community can import. Empty = manual-only. */
+/** The exports a community can import. Empty = WhatsApp-only. */
 export function importsFor(community: CommunitySlug): ImportSource[] {
   return getCommunity(community)?.imports ?? [];
 }
