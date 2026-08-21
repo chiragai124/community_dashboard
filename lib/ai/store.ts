@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { CommunitySlug, CommunitySummary } from '../types';
 import type { Takeaway } from './groq';
-import { readJsonObject, supabaseStorageEnabled, writeJsonObject } from '../supabase-storage';
+import { readJsonObject, vercelBlobEnabled, writeJsonObject } from '../vercel-blob';
 
 /**
  * Persistence for the two manually-triggered, cross-group Groq outputs:
@@ -11,10 +11,10 @@ import { readJsonObject, supabaseStorageEnabled, writeJsonObject } from '../supa
  * Regenerated on demand via a "Regenerate" button, not automatically, since
  * both depend on multiple groups' data settling first.
  *
- * Same dual-backend pattern as lib/imports/store.ts: Supabase Storage when
- * SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set (required on Vercel,
- * whose filesystem is read-only outside `/tmp`), a local JSON file
- * otherwise (the zero-config default for `npm run dev`).
+ * Same dual-backend pattern as lib/imports/store.ts: Vercel Blob when
+ * BLOB_READ_WRITE_TOKEN is set (required on Vercel, whose filesystem is
+ * read-only outside `/tmp`), a local JSON file otherwise (the zero-config
+ * default for `npm run dev`).
  */
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -39,13 +39,13 @@ async function writeLocalJson(file: string, data: unknown): Promise<void> {
 }
 
 async function readJson<T>(objectName: string, file: string, fallback: T): Promise<T> {
-  return supabaseStorageEnabled()
+  return vercelBlobEnabled()
     ? readJsonObject(objectName, fallback)
     : readLocalJson(file, fallback);
 }
 
 async function writeJson(objectName: string, file: string, data: unknown): Promise<void> {
-  if (supabaseStorageEnabled()) {
+  if (vercelBlobEnabled()) {
     await writeJsonObject(objectName, data);
     return;
   }

@@ -147,19 +147,20 @@ the source files, and never their raw rows:
 Nothing you upload — including the chat transcript itself — is ever kept as
 a file; each is parsed in-process and discarded.
 
-**Two backends** ([`lib/supabase-storage.ts`](lib/supabase-storage.ts)),
-chosen automatically by whether `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
-are set:
+**Two backends** ([`lib/vercel-blob.ts`](lib/vercel-blob.ts)), chosen
+automatically by whether `BLOB_READ_WRITE_TOKEN` is set:
 
 - **Local disk** (`data/*.json`, gitignored) — the zero-config default for
   `npm run dev`.
-- **Supabase Storage** (bucket `whatsapp-imports` by default — see
-  `.env.local`) — **required for any deploy target with a read-only
+- **Vercel Blob** — **required for any deploy target with a read-only
   filesystem, including Vercel**, since serverless functions there can't
   write to `data/` (only to `/tmp`, which is ephemeral and not shared across
-  invocations). The app creates the bucket itself on first write if it's
-  missing. Despite the bucket's name, only small JSON documents are ever
-  stored in it — no raw uploaded files.
+  invocations). Create a Blob store once (Vercel dashboard → your project →
+  Storage → Create Database → Blob) and connect it to the project —
+  `BLOB_READ_WRITE_TOKEN` is then injected automatically, no manual key
+  needed. Only small JSON documents are ever stored — no raw uploaded files.
+  Access defaults to `private` (see `.env.local`) since these documents
+  contain real names and quoted message snippets.
 
 All three are small enough to read and correct by hand.
 
@@ -194,6 +195,7 @@ lib/
   weeks.ts                  Monday-anchored week maths (Short.io/GA4 only), all in UTC
   period.ts                 Manual date-range maths for WhatsApp reports
   zip.ts                     Minimal ZIP reader shared by the .xlsx and "with media" readers
+  vercel-blob.ts             Vercel Blob read/write for the JSON stores (Vercel deploys only)
   metrics.ts                Every derived metric and formatter
   dashboard.ts               The one loader every page uses, plus roll-ups and takeaways
   ai/groq.ts                  The two Groq call shapes: per-group and cross-group synthesis

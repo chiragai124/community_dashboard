@@ -13,18 +13,18 @@ import type {
 import { isCommunitySlug, isGroupSlug } from '../groups';
 import { parseISODate, weekStartOf } from '../weeks';
 import { isValidISODate } from '../period';
-import { readJsonObject, supabaseStorageEnabled, writeJsonObject } from '../supabase-storage';
+import { readJsonObject, vercelBlobEnabled, writeJsonObject } from '../vercel-blob';
 
 /**
  * Persistence for uploaded exports: a handful of numbers per upload — not
  * the source files, and not their raw rows. Small enough to inspect or
  * hand-correct when a figure looks wrong.
  *
- * Two backends, chosen at runtime by whether SUPABASE_URL +
- * SUPABASE_SERVICE_ROLE_KEY are set:
- *   - Supabase Storage (see ../supabase-storage.ts) — required on Vercel and
- *     any other deploy target with a read-only filesystem, since `data/` on
- *     disk isn't writable there.
+ * Two backends, chosen at runtime by whether BLOB_READ_WRITE_TOKEN is set:
+ *   - Vercel Blob (see ../vercel-blob.ts) — required on Vercel and any other
+ *     deploy target with a read-only filesystem, since `data/` on disk isn't
+ *     writable there. The token is injected automatically once a Blob store
+ *     exists for the project.
  *   - A local JSON file, `data/imports.json` — the zero-config default for
  *     `npm run dev`.
  *
@@ -233,7 +233,7 @@ function sortImports(files: ImportedFile[]): ImportedFile[] {
  * state.
  */
 export async function getImports(): Promise<ImportedFile[]> {
-  const raw = supabaseStorageEnabled()
+  const raw = vercelBlobEnabled()
     ? await readJsonObject<unknown>(STORAGE_OBJECT, [])
     : await readLocalFile();
   const parsed = raw;
@@ -259,7 +259,7 @@ async function readLocalFile(): Promise<unknown> {
 
 async function writeImports(files: ImportedFile[]): Promise<void> {
   const sorted = sortImports(files);
-  if (supabaseStorageEnabled()) {
+  if (vercelBlobEnabled()) {
     await writeJsonObject(STORAGE_OBJECT, sorted);
     return;
   }
