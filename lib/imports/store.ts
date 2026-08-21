@@ -13,13 +13,20 @@ import type {
 import { isCommunitySlug, isGroupSlug } from '../groups';
 import { parseISODate, weekStartOf } from '../weeks';
 import { isValidISODate } from '../period';
+import { readJsonObject, supabaseStorageEnabled, writeJsonObject } from '../supabase-storage';
 
 /**
- * Persistence for uploaded exports.
+ * Persistence for uploaded exports: a handful of numbers per upload — not
+ * the source files, and not their raw rows. Small enough to inspect or
+ * hand-correct when a figure looks wrong.
  *
- * One JSON file, data/imports.json, holding a handful of numbers per upload —
- * not the source files, and not their raw rows. A small readable file can be
- * inspected or hand-corrected when a figure looks wrong.
+ * Two backends, chosen at runtime by whether SUPABASE_URL +
+ * SUPABASE_SERVICE_ROLE_KEY are set:
+ *   - Supabase Storage (see ../supabase-storage.ts) — required on Vercel and
+ *     any other deploy target with a read-only filesystem, since `data/` on
+ *     disk isn't writable there.
+ *   - A local JSON file, `data/imports.json` — the zero-config default for
+ *     `npm run dev`.
  *
  * Short.io/GA4 stay on the Monday-anchored week system (untouched — see
  * lib/weeks.ts); re-uploading the same export for the same week REPLACES
@@ -31,6 +38,7 @@ import { isValidISODate } from '../period';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STORE_FILE = path.join(DATA_DIR, 'imports.json');
+const STORAGE_OBJECT = 'imports.json';
 
 /** Short.io's natural key: it's community-scoped (currently Community #2 only). */
 export function importId(
@@ -220,19 +228,27 @@ function sortImports(files: ImportedFile[]): ImportedFile[] {
 /* ----------------------------------------------------------------- reading */
 
 /**
- * Everything uploaded so far. A missing store file is an empty list, not an
- * error: nothing imported yet is the normal starting state.
+ * Everything uploaded so far. A missing store (file or Storage object) is an
+ * empty list, not an error: nothing imported yet is the normal starting
+ * state.
  */
 export async function getImports(): Promise<ImportedFile[]> {
+  const raw = supabaseStorageEnabled()
+    ? await readJsonObject<unknown>(STORAGE_OBJECT, [])
+    : await readLocalFile();
+  const parsed = raw;
+  if (!Array.isArray(parsed)) return [];
+  return sortImports(
+    parsed
+      .map((row) => normalizeImport(row as Record<string, unknown>))
+      .filter((f): f is ImportedFile => f !== null),
+  );
+}
+
+async function readLocalFile(): Promise<unknown> {
   try {
     const text = await fs.readFile(STORE_FILE, 'utf8');
-    const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) return [];
-    return sortImports(
-      parsed
-        .map((row) => normalizeImport(row as Record<string, unknown>))
-        .filter((f): f is ImportedFile => f !== null),
-    );
+    return JSON.parse(text);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
@@ -242,8 +258,13 @@ export async function getImports(): Promise<ImportedFile[]> {
 /* ----------------------------------------------------------------- writing */
 
 async function writeImports(files: ImportedFile[]): Promise<void> {
+  const sorted = sortImports(files);
+  if (supabaseStorageEnabled()) {
+    await writeJsonObject(STORAGE_OBJECT, sorted);
+    return;
+  }
   await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(STORE_FILE, `${JSON.stringify(sortImports(files), null, 2)}\n`, 'utf8');
+  await fs.writeFile(STORE_FILE, `${JSON.stringify(sorted, null, 2)}\n`, 'utf8');
 }
 
 function withId(file: Omit<ImportedFile, 'id' | 'uploadedAt'>): ImportedFile {

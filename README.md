@@ -134,14 +134,32 @@ so a stored WhatsApp import needs no community column of its own.
 
 ## Where data is stored
 
-- `data/imports.json` (gitignored) — one record per uploaded file: source,
-  community/group, the manually-entered date range (WhatsApp) or week
-  (Short.io/GA4), filename, the extracted figures, and the per-group AI
-  summary. Nothing you upload — including the chat transcript itself — is
-  kept as a file; each is parsed in-process and discarded.
-- `data/community-summaries.json` / `data/overview-takeaways.json`
-  (gitignored) — the manually-generated community and Overview AI summaries,
-  regenerated on demand.
+Three small JSON documents, holding a handful of numbers per upload — never
+the source files, and never their raw rows:
+
+- `imports.json` — one record per uploaded file: source, community/group,
+  the manually-entered date range (WhatsApp) or week (Short.io/GA4),
+  filename, the extracted figures, and the per-group AI summary.
+- `community-summaries.json` / `overview-takeaways.json` — the
+  manually-generated community and Overview AI summaries, regenerated on
+  demand.
+
+Nothing you upload — including the chat transcript itself — is ever kept as
+a file; each is parsed in-process and discarded.
+
+**Two backends** ([`lib/supabase-storage.ts`](lib/supabase-storage.ts)),
+chosen automatically by whether `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+are set:
+
+- **Local disk** (`data/*.json`, gitignored) — the zero-config default for
+  `npm run dev`.
+- **Supabase Storage** (bucket `whatsapp-imports` by default — see
+  `.env.local`) — **required for any deploy target with a read-only
+  filesystem, including Vercel**, since serverless functions there can't
+  write to `data/` (only to `/tmp`, which is ephemeral and not shared across
+  invocations). The app creates the bucket itself on first write if it's
+  missing. Despite the bucket's name, only small JSON documents are ever
+  stored in it — no raw uploaded files.
 
 All three are small enough to read and correct by hand.
 
