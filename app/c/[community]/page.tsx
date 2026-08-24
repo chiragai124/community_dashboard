@@ -3,10 +3,18 @@ import { PageHeader } from '@/components/PageHeader';
 import { StatCard } from '@/components/StatCard';
 import { SnapshotCard } from '@/components/SnapshotCard';
 import { MemberComparison } from '@/components/MemberComparison';
+import { CommunityMemberEntryForm } from '@/components/CommunityMemberEntryForm';
 import { CommunityTopicsPanel } from '@/components/CommunityTopicsPanel';
-import { activityExtremes, communityTotals, groupsInCommunity, loadDashboard } from '@/lib/dashboard';
+import {
+  activityExtremes,
+  communityMembers,
+  communityTotals,
+  groupsInCommunity,
+  loadDashboard,
+  previousCommunityMembers,
+} from '@/lib/dashboard';
 import { getCommunity, getGroup } from '@/lib/groups';
-import { formatExact, formatSigned } from '@/lib/metrics';
+import { formatExact } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { groqEnabled } from '@/lib/ai/groq';
 import { getCommunitySummaries } from '@/lib/ai/store';
@@ -14,11 +22,12 @@ import { getCommunitySummaries } from '@/lib/ai/store';
 export const dynamic = 'force-dynamic';
 
 /**
- * One community's tab: this week's headline figures, a messages-by-group bar
- * chart, a member-vs-previous-report comparison, a snapshot card per group,
- * and a community-wide topics/narrative synthesis. Group detail (full
- * sentiment, WhatsApp upload) is one click away via each card's link — this
- * page itself stays a single-screen report, matching the reference.
+ * One community's tab: headline figures, a messages-by-group bar chart, a
+ * manual member-total entry, a member-vs-previous-report comparison, a
+ * snapshot card per group, and a community-wide topics/narrative synthesis.
+ * Group detail (full sentiment, WhatsApp upload) is one click away via each
+ * card's link — this page itself stays a single-screen report, matching the
+ * reference.
  */
 export default async function CommunityPage({
   params,
@@ -47,23 +56,22 @@ export default async function CommunityPage({
           end: withData.reduce((max, m) => (m.periodEnd! > max ? m.periodEnd! : max), withData[0].periodEnd!),
         };
 
+  const memberEntry = communityMembers(data, community.slug);
+  const previousMemberEntry = previousCommunityMembers(data, community.slug);
+
+  const periodLabel = range
+    ? `${formatDateRange(range.start, range.end)}${memberEntry ? ` · ${formatExact(memberEntry.total)} members` : ''}`
+    : memberEntry
+      ? `${formatExact(memberEntry.total)} members`
+      : null;
+
   const summaries = await getCommunitySummaries();
 
   return (
     <>
-      <PageHeader
-        eyebrow={`${community.label} · Weekly report`}
-        title={community.name}
-        periodLabel={range ? formatDateRange(range.start, range.end) : null}
-      />
+      <PageHeader eyebrow={`${community.label} · Weekly report`} title={community.name} periodLabel={periodLabel} />
 
       <div className="content">
-        <div className="heroBlock">
-          <span className="heroBlock__label">Total members</span>
-          <span className="hero">{formatExact(totals.members)}</span>
-          <span className="heroBlock__sub">{formatSigned(totals.newMembers)} vs previous report</span>
-        </div>
-
         <div className="grid grid--stats">
           <StatCard label="Messages this period" value={formatExact(totals.messageCount)} />
           <StatCard label="Unique active chatters" value={formatExact(totals.uniqueActiveChatters)} />
@@ -77,14 +85,17 @@ export default async function CommunityPage({
           />
         </div>
 
+        <h2 className="sectionTitle">Total members</h2>
+        <CommunityMemberEntryForm community={community.slug} currentTotal={memberEntry?.total ?? null} />
+
         <h2 className="sectionTitle">Members vs. previous report</h2>
         <MemberComparison
-          currentMembers={totals.members}
-          previousMembers={totals.groupsWithEntry > 0 ? totals.previousMembers : null}
-          previousLabel={null}
+          currentMembers={memberEntry?.total ?? 0}
+          previousMembers={previousMemberEntry?.total ?? null}
+          previousLabel={previousMemberEntry ? previousMemberEntry.enteredAt : null}
         />
 
-        <h2 className="sectionTitle">Messages by group</h2>
+        <h2 className="sectionTitle">Messages by Group</h2>
         <section className="card">
           <div className="card__body">
             <div className="bars">
@@ -122,7 +133,7 @@ export default async function CommunityPage({
           </div>
         </section>
 
-        <h2 className="sectionTitle">Group snapshots</h2>
+        <h2 className="sectionTitle">Group Snapshots</h2>
         <div className="grid grid--snapshots">
           {perGroup.map((metrics) => (
             <SnapshotCard key={metrics.group} metrics={metrics} />

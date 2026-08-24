@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { generateOverviewTakeaways, groqEnabled } from '@/lib/ai/groq';
 import { saveOverviewTakeaways } from '@/lib/ai/store';
 import { getImports, latestGroupPeriod } from '@/lib/imports';
+import { getCommunityMemberEntries, latestCommunityMemberEntry } from '@/lib/community-members';
 import { COMMUNITIES, groupsOf } from '@/lib/groups';
+
+// The Groq call here can run long enough to exceed Vercel's default (10s on
+// Hobby) function timeout — see app/api/imports/route.ts's maxDuration.
+export const maxDuration = 60;
 
 /**
  * POST — regenerate the Overview page's "Headline Takeaways" from every
@@ -18,7 +23,7 @@ export async function POST() {
     );
   }
 
-  const imports = await getImports();
+  const [imports, memberEntries] = await Promise.all([getImports(), getCommunityMemberEntries()]);
 
   const communities = COMMUNITIES.map((community) => {
     const groups = groupsOf(community.slug)
@@ -32,10 +37,7 @@ export async function POST() {
         };
       })
       .filter((g): g is NonNullable<typeof g> => g !== null);
-    const memberCount = groupsOf(community.slug).reduce((sum, g) => {
-      const latest = latestGroupPeriod(imports, g.slug);
-      return sum + (latest?.whatsapp?.totalMembers ?? 0);
-    }, 0);
+    const memberCount = latestCommunityMemberEntry(memberEntries, community.slug)?.total ?? 0;
     const messageCount = groups.length === 0
       ? 0
       : groupsOf(community.slug).reduce((sum, g) => {

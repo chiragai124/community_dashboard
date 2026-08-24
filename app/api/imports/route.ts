@@ -38,6 +38,12 @@ import { generateGroupSummary, groqEnabled } from '@/lib/ai/groq';
 
 // Needs the Node runtime: parsing an .xlsx uses zlib.
 export const runtime = 'nodejs';
+// A large chat export plus the Groq call this route makes can run past
+// Vercel's default (10s on Hobby) function timeout, which fails silently
+// from the client's point of view — the upload looks like nothing happened
+// rather than a clear error, and needs a retry. 60s covers a busy group's
+// export comfortably; raise further if a real upload still times out.
+export const maxDuration = 60;
 
 /** Generous for these exports, small enough that a mis-picked file is refused. */
 const MAX_BYTES = 15 * 1024 * 1024;

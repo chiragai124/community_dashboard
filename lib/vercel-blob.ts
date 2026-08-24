@@ -37,13 +37,23 @@ export function vercelBlobEnabled(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
-/** Read one JSON blob, or `fallback` if it doesn't exist yet. */
+/**
+ * Read one JSON blob, or `fallback` if it doesn't exist yet.
+ *
+ * `useCache: false` is load-bearing, not an optimisation: Vercel's docs say
+ * plainly that after overwriting a blob at the same pathname, `get()` can
+ * keep returning the PREVIOUS version for up to 60 seconds through the CDN
+ * cache. Every read here follows a write elsewhere in the same request
+ * chain (upload → save → the next page load's getImports()), so a stale
+ * read is the normal case, not an edge case — this was very likely the
+ * actual cause of uploads silently "not showing up" until retried.
+ */
 export async function readJsonObject<T>(pathname: string, fallback: T): Promise<T> {
   // No `ifNoneMatch` is passed, so a found blob always comes back as
   // statusCode 200 (never the conditional-request 304 shape) — this check
   // is what lets TypeScript narrow `result.stream` to a real ReadableStream
   // below, not just documentation.
-  const result = await get(pathname, { access: ACCESS });
+  const result = await get(pathname, { access: ACCESS, useCache: false });
   if (!result || result.statusCode !== 200) return fallback;
   const text = await new Response(result.stream).text();
   if (text.trim() === '') return fallback;

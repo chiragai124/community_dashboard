@@ -1,16 +1,15 @@
 import { notFound } from 'next/navigation';
 import { PageHeader } from '@/components/PageHeader';
-import { StatCard, StatCardPercentDelta, ActivityBadge } from '@/components/StatCard';
+import { StatCard, ActivityBadge } from '@/components/StatCard';
 import { WhatsappImportPanel } from '@/components/WhatsappImportPanel';
-import { MemberComparison } from '@/components/MemberComparison';
 import { splitNotes } from '@/lib/notes';
-import { SingleTrendChart, Sparkline } from '@/components/charts';
+import { Sparkline } from '@/components/charts';
 import { TrendingTopic } from '@/components/TrendingTopic';
 import { SentimentPanel, hasSentiment } from '@/components/SentimentPanel';
 import { getCommunity, getGroup } from '@/lib/groups';
 import { SOURCE_META } from '@/lib/imports';
 import { groupPeriodSeries, loadDashboard } from '@/lib/dashboard';
-import { formatExact, formatPercent } from '@/lib/metrics';
+import { formatExact } from '@/lib/metrics';
 import { formatDateRange, formatShortDate } from '@/lib/period';
 
 // Every figure here is read at request time — nothing is prerendered.
@@ -18,10 +17,13 @@ export const dynamic = 'force-dynamic';
 
 /**
  * One group's own page: full sentiment breakdown, topic pills, an AI-written
- * narrative when one exists, a membership trend across every filed period,
- * and the WhatsApp upload control. Reached from that group's snapshot card
- * on its Community tab — this is the "one click deeper" view, not primary
- * nav.
+ * narrative when one exists, and the WhatsApp upload control. Reached from
+ * that group's snapshot card on its Community tab — this is the "one click
+ * deeper" view, not primary nav.
+ *
+ * No member figures here — total membership is tracked manually at the
+ * community level (see the Community tab), not derived per group from the
+ * chat export.
  */
 export default async function GroupPage({
   params,
@@ -51,10 +53,6 @@ export default async function GroupPage({
     .sort((a, b) => ((a.periodStart ?? '') < (b.periodStart ?? '') ? 1 : -1))[0] ?? null;
   const currentWarnings = latestImport ? splitNotes(latestImport.notes).warnings : [];
 
-  const memberPoints = series.map((m) => ({
-    week: m.periodEnd ? formatShortDate(m.periodEnd) : '',
-    value: m.totalMembers,
-  }));
   const messagePoints = series.map((m) => ({
     week: m.periodEnd ? formatShortDate(m.periodEnd) : '',
     value: m.messageCount,
@@ -76,9 +74,9 @@ export default async function GroupPage({
       <div className="content">
         {!metrics.hasWhatsapp ? (
           <div className="prefillNote" style={{ marginBottom: 18 }}>
-            No WhatsApp report filed for {group.label} yet. Members, growth, messages, topics and
-            sentiment below stay blank until you upload an export with a report date range — see
-            “Import WhatsApp chat” below.
+            No WhatsApp report filed for {group.label} yet. Messages, topics and sentiment below
+            stay blank until you upload an export with a report date range — see “Import WhatsApp
+            chat” below.
           </div>
         ) : null}
 
@@ -94,43 +92,12 @@ export default async function GroupPage({
         <TrendingTopic topic={metrics.mainTopics[0]} mentions={metrics.topTopicMentions} />
 
         <div className="grid grid--stats">
-          <StatCard
-            label="Members"
-            value={formatExact(metrics.totalMembers)}
-            delta={metrics.newMembers}
-            deltaSuffix="vs previous report"
-            accent
-          >
-            <Sparkline points={memberPoints} />
-          </StatCard>
-
-          <StatCardPercentDelta
-            label="Member growth"
-            value={formatPercent(metrics.memberGrowthPct)}
-            hint={
-              metrics.previousTotalMembers !== null
-                ? `from ${formatExact(metrics.previousTotalMembers)} last report`
-                : 'needs a previous report'
-            }
-          />
-
-          <StatCard label="Messages this period" value={formatExact(metrics.messageCount)}>
+          <StatCard label="Messages this period" value={formatExact(metrics.messageCount)} accent>
             <Sparkline points={messagePoints} />
           </StatCard>
 
           <StatCard label="Unique active chatters" value={formatExact(metrics.uniqueActiveChatters)} />
         </div>
-
-        <h2 className="sectionTitle">Members vs. previous report</h2>
-        <MemberComparison
-          currentMembers={metrics.totalMembers ?? 0}
-          previousMembers={metrics.previousTotalMembers}
-          previousLabel={
-            metrics.previousPeriodStart && metrics.previousPeriodEnd
-              ? formatDateRange(metrics.previousPeriodStart, metrics.previousPeriodEnd)
-              : null
-          }
-        />
 
         {metrics.mainTopics.length > 0 ? (
           <section className="card" style={{ marginTop: 14 }}>
@@ -181,13 +148,6 @@ export default async function GroupPage({
             />
           </div>
         ) : null}
-
-        <h2 className="sectionTitle">Members · every filed report</h2>
-        <section className="card">
-          <div className="card__body">
-            <SingleTrendChart points={memberPoints} seriesLabel="Members" unit="count" height={216} />
-          </div>
-        </section>
 
         <h2 className="sectionTitle">Import WhatsApp chat</h2>
         <WhatsappImportPanel

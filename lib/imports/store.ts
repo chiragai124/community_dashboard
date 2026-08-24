@@ -100,11 +100,6 @@ function normalizeWhatsapp(raw: unknown): WhatsappFigures | undefined {
         .filter((v) => v.name !== '')
     : [];
   return {
-    totalMembers: num(w.totalMembers),
-    newMembers: Math.round(Number(w.newMembers) || 0),
-    joinsViaLink: num(w.joinsViaLink),
-    joinsAdded: num(w.joinsAdded),
-    leaves: num(w.leaves),
     messageCount: num(w.messageCount),
     uniqueActiveChatters: num(w.uniqueActiveChatters),
     topVoices,

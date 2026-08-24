@@ -3,8 +3,9 @@
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CommunitySlug, ImportSource, ImportedFile } from '@/lib/types';
-import { formatWeekLabel } from '@/lib/weeks';
+import { formatWeekLabel, parseISODate, weekStartOf } from '@/lib/weeks';
 import { formatRelativeTime } from '@/lib/metrics';
+import { DateRangeFields } from '@/components/DateRangeFields';
 
 /**
  * The weekly upload control: one row per source, each with the week it is for,
@@ -31,7 +32,6 @@ export interface SourceInfo {
 export function ImportPanel({
   community,
   scopeLabel,
-  weekOptions,
   defaultWeek,
   sources,
   existing,
@@ -40,7 +40,7 @@ export function ImportPanel({
   community?: CommunitySlug;
   /** What this upload is for, in plain words: a community's label, or e.g. "the landing page". */
   scopeLabel: string;
-  weekOptions: string[];
+  /** Seeds the initial start/end date fields — today's displayed week. */
   defaultWeek: string;
   sources: SourceInfo[];
   /** Everything already stored for this scope, any week. */
@@ -64,7 +64,6 @@ export function ImportPanel({
             key={source.source}
             community={community}
             info={source}
-            weekOptions={weekOptions}
             defaultWeek={defaultWeek}
             existing={existing.filter((f) => f.source === source.source)}
           />
@@ -77,28 +76,37 @@ export function ImportPanel({
 function SourceRow({
   community,
   info,
-  weekOptions,
   defaultWeek,
   existing,
 }: {
   community?: CommunitySlug;
   info: SourceInfo;
-  weekOptions: string[];
   defaultWeek: string;
   existing: ImportedFile[];
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [week, setWeek] = useState(defaultWeek);
+  // Same two-date picker WhatsApp import uses, for consistency — Short.io/GA4
+  // still file under one Monday-anchored week internally (derived from the
+  // start date below), since each export IS one week's snapshot; the end
+  // date just keeps the control visually and behaviourally identical across
+  // all three import sources.
+  const [periodStart, setPeriodStart] = useState(defaultWeek);
+  const [periodEnd, setPeriodEnd] = useState(defaultWeek);
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [okMessage, setOkMessage] = useState<string | null>(null);
 
+  const week = weekStartOf(parseISODate(periodStart || defaultWeek));
   const stored = existing.find((f) => f.weekStart === week) ?? null;
   const working = busy || isPending;
 
   async function upload(file: File) {
+    if (periodEnd < periodStart) {
+      setError('The end date is before the start date.');
+      return;
+    }
     setBusy(true);
     setError(null);
     setOkMessage(null);
@@ -160,36 +168,38 @@ function SourceRow({
         </div>
       </div>
 
-      <div className="impRow__controls">
-        <label className="field">
-          <span className="field__label">Week</span>
-          <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={working}>
-            {weekOptions.map((option) => (
-              <option key={option} value={option}>
-                {formatWeekLabel(option)}
-              </option>
-            ))}
-          </select>
-        </label>
+      <DateRangeFields
+        start={periodStart}
+        end={periodEnd}
+        onStartChange={setPeriodStart}
+        onEndChange={setPeriodEnd}
+        disabled={working}
+      />
+      <p className="chartNote" style={{ marginTop: 0 }}>
+        Filed under the week of {formatWeekLabel(week)} (the Monday–Sunday week containing the
+        start date above).
+      </p>
 
-        <label className="field">
-          <span className="field__label">
-            File <span className="field__hint">{info.extensions.join(' or ')}</span>
-          </span>
-          <input
-            ref={fileInput}
-            type="file"
-            accept={info.accept}
-            disabled={working}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void upload(file);
-            }}
-          />
-        </label>
-      </div>
+      <label className="field">
+        <span className="field__label">
+          File <span className="field__hint">{info.extensions.join(' or ')}</span>
+        </span>
+        <input
+          ref={fileInput}
+          type="file"
+          accept={info.accept}
+          disabled={working}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void upload(file);
+          }}
+        />
+      </label>
 
-      {working ? <p className="impRow__status">Reading the file…</p> : null}
+      {working ? <p className="impRow__status impRow__status--busy" role="status" aria-live="polite">
+        <span className="spinner" aria-hidden="true" />
+        Reading the file…
+      </p> : null}
 
       {error ? (
         <p className="formMsg formMsg--err" role="alert">

@@ -55,17 +55,18 @@ export const SOURCE_META: Record<ImportSource, SourceMeta> = {
     accept: '.zip,.txt,text/plain,application/zip',
     extensions: ['.zip', '.txt'],
     provides:
-      'Total members, growth, activity level, messages, active chatters, top voices, topics, ' +
-      'sentiment, and an AI-generated status tag/summary/narrative for the latest week',
+      'Activity level, messages, active chatters, top voices, topics, sentiment, and an ' +
+      'AI-generated status tag/summary/narrative for the report period you enter below. ' +
+      'Total membership is entered manually per community, not derived from this export — ' +
+      'see "Total members" on the Community tab.',
     steps: [
       "Open this group in WhatsApp, tap the group name to open Group info.",
       'Scroll down and tap Export chat, then choose either Include media or Without media — both work.',
       'Save or share the .zip (or .txt) file to somewhere you can upload it from.',
-      "Upload the WHOLE file every time, not a trimmed one-week slice — it's the group's " +
-        'full history, and every figure here is recomputed from scratch from all of it. ' +
-        "With media, only the chat text inside the .zip is read — photos, videos and voice " +
-        'notes are ignored and never leave the archive. There is no week picker: uploading ' +
-        'fills in every week the export covers.',
+      "Upload the WHOLE file every time, not a trimmed one-week slice — the figures for the " +
+        'report period you enter below are recomputed from scratch each time. With media, ' +
+        'only the chat text inside the .zip is read — photos, videos and voice notes are ' +
+        'ignored and never leave the archive.',
     ],
   },
   shortio: {

@@ -6,7 +6,6 @@ import { SOURCE_META } from '@/lib/imports';
 import {
   GA4_FIGURES,
   communityShortio,
-  entryWeekOptions,
   ga4Series,
   landingPageGa4,
   loadDashboard,
@@ -61,7 +60,6 @@ export default async function LandingPageAndWadl({
         <div style={{ marginTop: 14 }}>
           <ImportPanel
             scopeLabel="the landing page"
-            weekOptions={entryWeekOptions()}
             defaultWeek={data.displayWeek}
             sources={[SOURCE_META.ga4]}
             existing={data.imports.filter((f) => f.source === 'ga4')}
@@ -83,7 +81,6 @@ export default async function LandingPageAndWadl({
             <ImportPanel
               community="community-2"
               scopeLabel={community2.label}
-              weekOptions={entryWeekOptions()}
               defaultWeek={data.displayWeek}
               sources={community2Sources}
               existing={community2Imports}

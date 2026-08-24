@@ -1,17 +1,17 @@
 # amber Communities · Weekly Engagement Report
 
 A weekly report across amber's WhatsApp communities, built from uploaded
-exports plus one thing you type by hand per upload: the report's date range.
+exports plus two things you type by hand: a report's date range per
+WhatsApp upload, and each community's total member count.
 
 | Tab | What it shows |
 |---|---|
 | **Overview** | Total members across every community, per-community member/message counts, two bar charts, a members-vs-previous-report comparison, and headline takeaways |
-| **Community #1 / #2 / #3** | Headline stats, a messages-by-group bar chart, a members-vs-previous-report comparison, a snapshot card per group (status tag, messages, active chatters, top voices), and one community-wide "Main topics discussed" + narrative synthesis |
+| **Community #1 / #2 / #3** | Headline stats, a manual "Total members" entry, a members-vs-previous-report comparison, a messages-by-group bar chart, a snapshot card per group (status tag, messages, active chatters, top voices), and one community-wide "Main topics discussed" + narrative synthesis |
 | **Landing page & WADL** | GA4 landing-page traffic and Community #2's Short.io link data — untouched, still on the original weekly system |
 
 Each group's own page (one click from its snapshot card) has the full
-sentiment breakdown, a membership trend across every filed report, and the
-WhatsApp upload control.
+sentiment breakdown and the WhatsApp upload control.
 
 ## Run it
 
@@ -22,22 +22,42 @@ npm run build && npm start   # production
 npm run typecheck            # tsc --noEmit
 ```
 
-Every card reads `—`/`0` until a real WhatsApp report is filed for that
-group — there is no demo/fabricated data anywhere in this app.
+Every card reads `—`/`0` until a real WhatsApp report or member total is
+filed — there is no demo/fabricated data anywhere in this app.
 
-## The routine: manually-dated reports, not auto-detected weeks
+## Total membership is entered manually, not parsed
 
-Each group's own page has an **Import WhatsApp chat** panel with two date
-fields — a report start date and end date — plus a file picker. You choose
-the range; the dashboard reports on exactly that range, regardless of what
-weeks the chat export's own message timestamps happen to fall into. Filing
-the same range again replaces it; filing a new range adds it as that group's
-latest report, and the group's report history keeps every range you've ever
-filed (used for the membership trend and the previous-report comparison).
+Earlier versions of this app replayed a chat export's own join/add/leave/
+remove system messages to compute a member total. That undercounts: a
+WhatsApp export doesn't reliably contain a group's *full* history (older
+events can be missing depending on export settings and app version), so a
+replay is only ever as complete as what happened to survive in that
+particular export.
 
-Short.io and GA4 still upload from the Landing page & WADL page on the
-original Monday-anchored week system — those two integrations weren't
-touched by this change.
+Instead, each **Community tab** has an "Update total members" form — one
+number, one date (defaults to today). Every save adds a new dated point to
+that community's history rather than overwriting it (saving the same date
+again corrects that entry); "Members vs. previous report" then compares the
+current total against whichever entry came before it. This applies at the
+**community** level only — group-level member counts don't exist anywhere in
+the app any more, including on Group Snapshot cards, which now show
+messages, active chatters, top voices and the status tag only.
+
+## The routine: manually-dated WhatsApp reports, one consistent date picker
+
+Every import — WhatsApp, Short.io, and GA4 — uses the same two-date-field
+picker (start date, end date; see
+[`components/DateRangeFields.tsx`](components/DateRangeFields.tsx)), so the
+three sources no longer feel like three different tools.
+
+For **WhatsApp**, both dates matter: you choose the range, and the dashboard
+reports on exactly that range, regardless of what weeks the chat export's
+own message timestamps happen to fall into. Filing the same range again
+replaces it; filing a new range adds it as that group's latest report. For
+**Short.io/GA4**, only the start date matters (each export is still one
+Monday–Sunday week's snapshot) — the end date field is there for visual
+consistency across all three pickers, and the panel states plainly which
+week the start date resolves to before you upload.
 
 ### Exporting from WhatsApp
 
@@ -45,26 +65,16 @@ touched by this change.
 2. Scroll down and tap **Export chat**, then choose **Include media** or
    **Without media** — both work; upload the resulting `.zip` or `.txt`
    directly, no manual unzipping needed.
-3. Upload the group's **whole chat history**, every time — not a slice
-   matching your chosen range. See why below.
-4. Enter the report's start and end date in the two fields above the file
+3. Enter the report's start and end date in the two fields above the file
    picker, then upload.
 
 With media, only the chat `.txt` inside the `.zip` is read (found by name —
 WhatsApp always includes "chat" in it — falling back to the largest `.txt`
 entry if that fails to match). Every photo, video and voice note in the
-archive is left compressed and untouched; none of it is ever decompressed or
-sent anywhere. A "with media" export is capped at 80MB (a 25MB cap applies to
-text-only `.txt` uploads).
+archive is left compressed and untouched. A "with media" export is capped at
+80MB (a 25MB cap applies to text-only `.txt` uploads).
 
-A chat export has no "member count" anywhere in it — only join/add/leave/
-remove system messages — so member count for any given report is
-**replayed**: every join/add is `+1`, every leave/remove is `-1`, in
-timestamp order, from the start of the file through your chosen end date.
-That's why the full history is needed every time, even though only messages
-inside your date range count toward the rest of the report.
-
-From messages inside your chosen range only (not the whole export):
+From messages inside your chosen range only:
 
 - **Messages this period**, **unique active chatters**, **top voices** (by
   message count).
@@ -82,12 +92,31 @@ key, nothing sent anywhere.
 
 ## Members vs. previous report
 
-Every group page and every Community tab has a dedicated section comparing
-the current report's member count against whatever report was filed
-immediately before it (by date, not by upload order) — previous count, now,
-and the signed change. The Overview page shows the same comparison pooled
-across every community. Shows an honest "nothing to compare yet" instead of
-a misleading zero when there's no earlier report on file.
+Every Community tab, and the Overview page (pooled across all three
+communities), has a dedicated section comparing the current member total
+against whichever manual entry came before it — previous count, now, and the
+signed change. Shows an honest "nothing to compare yet" instead of a
+misleading zero when there's no earlier entry on file for that community.
+
+## Upload reliability
+
+Large exports and the Groq call together can take longer than a serverless
+platform's default function timeout (10s on Vercel Hobby) — previously that
+looked like a silent failure needing a retry, with no real indication
+anything had gone wrong. Two fixes:
+
+- `app/api/imports/route.ts` and the two `/api/ai/*` routes now declare
+  `export const maxDuration = 60` explicitly.
+- Reads from Vercel Blob now pass `useCache: false`
+  ([`lib/vercel-blob.ts`](lib/vercel-blob.ts)) — Vercel's own docs note that
+  a read immediately after a write to the same blob path can return the
+  *previous* version for up to 60 seconds through the CDN cache otherwise,
+  which is exactly the "uploaded fine, but doesn't show up" symptom this
+  app was hitting on every upload → refresh cycle.
+- The upload panel now shows a visible, growing "still working" indicator
+  (elapsed seconds, a note for anything past 15s) instead of a static
+  "loading…", and distinguishes a real timeout (504) or a dropped connection
+  from a generic failure in the error message shown.
 
 ## The external calls: Groq
 
@@ -134,12 +163,14 @@ so a stored WhatsApp import needs no community column of its own.
 
 ## Where data is stored
 
-Three small JSON documents, holding a handful of numbers per upload — never
-the source files, and never their raw rows:
+Four small JSON documents, holding a handful of numbers per upload or entry
+— never the source files, and never their raw rows:
 
 - `imports.json` — one record per uploaded file: source, community/group,
   the manually-entered date range (WhatsApp) or week (Short.io/GA4),
   filename, the extracted figures, and the per-group AI summary.
+- `community-members.json` — the manually-entered "Total members" history,
+  one append-only log per community.
 - `community-summaries.json` / `overview-takeaways.json` — the
   manually-generated community and Overview AI summaries, regenerated on
   demand.
@@ -162,30 +193,32 @@ automatically by whether `BLOB_READ_WRITE_TOKEN` is set:
   Access defaults to `private` (see `.env.local`) since these documents
   contain real names and quoted message snippets.
 
-All three are small enough to read and correct by hand.
+All four are small enough to read and correct by hand.
 
 ## What's manual vs. computed
 
-The only thing you type is a report's start/end date per upload (and the
-Groq "Regenerate" clicks, which are also manual by design). Everything else:
-Short.io and GA4 figures are read straight from the uploaded files; every
-WhatsApp-derived figure (members, growth, messages, active chatters, top
-voices, activity level, topics, sentiment) is computed from the chat export
-for your chosen range; the AI status tag/summary/narrative come from Groq.
-If you're looking for polls, DMs, leads, or a free-text notes form — those
-were part of an earlier version of this app and have been removed.
+You type: a report's start/end date per WhatsApp upload, each community's
+total member count (with its date), and the Groq "Regenerate" clicks — all
+deliberately manual. Everything else: Short.io and GA4 figures are read
+straight from the uploaded files; every WhatsApp-derived figure (messages,
+active chatters, top voices, activity level, topics, sentiment) is computed
+from the chat export for your chosen range; the AI status tag/summary/
+narrative come from Groq. If you're looking for polls, DMs, leads, a
+free-text notes form, or parsed member counts — those were part of an
+earlier version of this app and have been removed.
 
 ## Layout
 
 ```
 app/
   page.tsx                        Overview
-  c/[community]/page.tsx          Community tab (headline stats + snapshot cards)
-  c/[community]/group/[slug]/     Group detail (sentiment, trend, WhatsApp upload)
+  c/[community]/page.tsx          Community tab (headline stats, member entry, snapshot cards)
+  c/[community]/group/[slug]/     Group detail (sentiment, topics, WhatsApp upload)
   merged/page.tsx                 Landing page & WADL (GA4 + Short.io — untouched)
   group/[slug]/                   Legacy redirect to the community-scoped group URL
   api/imports/                    POST an export (Short.io/GA4/WhatsApp), DELETE by id
   api/imports/reset/              POST — wipe every uploaded import
+  api/community-members/          POST { community, total, enteredAt? } — record a manual entry
   api/ai/community-summary/       POST { community } — regenerate a community's AI synthesis
   api/ai/overview-takeaways/      POST — regenerate the Overview's AI takeaways
   globals.css                     The whole design system (red/black/paper)
@@ -196,16 +229,18 @@ lib/
   period.ts                 Manual date-range maths for WhatsApp reports
   zip.ts                     Minimal ZIP reader shared by the .xlsx and "with media" readers
   vercel-blob.ts             Vercel Blob read/write for the JSON stores (Vercel deploys only)
+  community-members.ts       Manual per-community member-total history
   metrics.ts                Every derived metric and formatter
   dashboard.ts               The one loader every page uses, plus roll-ups and takeaways
   ai/groq.ts                  The two Groq call shapes: per-group and cross-group synthesis
   ai/store.ts                 Persistence for the manually-triggered community/overview summaries
   imports/
     shortio.ts, ga4.ts      Short.io/GA4 file readers (untouched)
-    whatsapp.ts             The WhatsApp chat parser — replay, range filtering, topics, sentiment
+    whatsapp.ts             The WhatsApp chat parser — message-level figures only, no replay
     store.ts                Persistence for every uploaded file's figures
-components/                 Charts, stat tiles, snapshot cards, the WhatsApp upload panel,
-                             MemberComparison, CommunityTopicsPanel, RegenerateButton
+components/                 Charts, stat tiles, snapshot cards, DateRangeFields, the WhatsApp
+                             upload panel, MemberComparison, CommunityMemberEntryForm,
+                             CommunityTopicsPanel, RegenerateButton
 ```
 
 Short.io/GA4 weeks are Monday→Sunday, identified by the Monday as

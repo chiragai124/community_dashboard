@@ -1,8 +1,14 @@
 import { COMMUNITIES, groupsOf } from './groups';
-import { ga4Week, getImports, latestGroupPeriod, previousGroupPeriod, shortioWeek } from './imports';
+import { ga4Week, getImports, latestGroupPeriod, shortioWeek } from './imports';
 import { buildGroupPeriodMetrics } from './metrics';
+import {
+  getCommunityMemberEntries,
+  latestCommunityMemberEntry,
+  previousCommunityMemberEntry,
+} from './community-members';
 import { currentWeekStart, lastNWeeks, parseISODate, weekStartOf } from './weeks';
 import type {
+  CommunityMemberEntry,
   CommunitySlug,
   Ga4Figures,
   GroupPeriodMetrics,
@@ -34,6 +40,8 @@ export interface DashboardData {
   weeks: string[];
   /** Each group's most recently filed WhatsApp report period. */
   perGroup: GroupPeriodMetrics[];
+  /** Every manually-entered community member-total reading, every community. */
+  memberEntries: CommunityMemberEntry[];
 }
 
 /**
@@ -44,7 +52,7 @@ export interface DashboardData {
  */
 export async function loadDashboard(weekOverride?: string | null): Promise<DashboardData> {
   const thisWeek = currentWeekStart();
-  const imports = await getImports();
+  const [imports, memberEntries] = await Promise.all([getImports(), getCommunityMemberEntries()]);
 
   let displayWeek: string;
   if (weekOverride && /^\d{4}-\d{2}-\d{2}$/.test(weekOverride)) {
@@ -61,19 +69,16 @@ export async function loadDashboard(weekOverride?: string | null): Promise<Dashb
       : nonWhatsappWeeks.reduce((latest, w) => (w > latest ? w : latest), thisWeek);
   }
 
-  const perGroup = COMMUNITIES.flatMap((c) => c.groups).map((g) => {
-    const latest = latestGroupPeriod(imports, g.slug);
-    const previous = latest?.periodStart
-      ? previousGroupPeriod(imports, g.slug, latest.periodStart)
-      : null;
-    return buildGroupPeriodMetrics(g.slug, latest, previous);
-  });
+  const perGroup = COMMUNITIES.flatMap((c) => c.groups).map((g) =>
+    buildGroupPeriodMetrics(g.slug, latestGroupPeriod(imports, g.slug)),
+  );
 
   return {
     imports,
     displayWeek,
     weeks: lastNWeeks(TREND_WINDOW, displayWeek),
     perGroup,
+    memberEntries,
   };
 }
 
@@ -88,14 +93,12 @@ export function groupsInCommunity(
     .filter((m): m is GroupPeriodMetrics => m !== undefined);
 }
 
-/** Every filed period for one group, oldest first — for the group page's membership trend. */
+/** Every filed period for one group, oldest first — for the group page's message trend. */
 export function groupPeriodSeries(data: DashboardData, group: GroupSlug): GroupPeriodMetrics[] {
   const periods = data.imports
     .filter((f) => f.source === 'whatsapp' && f.group === group && f.periodStart)
     .sort((a, b) => (a.periodStart! < b.periodStart! ? -1 : 1));
-  return periods.map((_, i) =>
-    buildGroupPeriodMetrics(group, periods[i], periods[i - 1] ?? null),
-  );
+  return periods.map((period) => buildGroupPeriodMetrics(group, period));
 }
 
 /** Weeks offered in the Short.io/GA4 upload panels: this week plus the previous 7, newest first. */
@@ -105,19 +108,56 @@ export function entryWeekOptions(count = TREND_WINDOW): string[] {
 
 /* --------------------------------------------------------- roll-ups & series */
 
-/** Pooled totals over any set of groups — every count simply sums. */
+/** Pooled message-level totals over any set of groups — every count simply sums. */
 export function rollup(metrics: GroupPeriodMetrics[]): RollupTotals {
   return {
-    members: metrics.reduce((s, m) => s + (m.totalMembers ?? 0), 0),
-    newMembers: metrics.reduce((s, m) => s + (m.newMembers ?? 0), 0),
     messageCount: metrics.reduce((s, m) => s + (m.messageCount ?? 0), 0),
     // Sum of each group's own unique-chatter count — an upper bound, not a
     // true cross-group union (raw sender identities aren't kept once a
     // group's figures are computed and persisted).
     uniqueActiveChatters: metrics.reduce((s, m) => s + (m.uniqueActiveChatters ?? 0), 0),
-    previousMembers: metrics.reduce((s, m) => s + (m.previousTotalMembers ?? 0), 0),
     groupsWithEntry: metrics.filter((m) => m.hasWhatsapp).length,
     groupCount: metrics.length,
+  };
+}
+
+/* --------------------------------------------------------- member totals -- */
+
+/** One community's current manually-entered member total, or null if none has ever been saved. */
+export function communityMembers(data: DashboardData, community: CommunitySlug): CommunityMemberEntry | null {
+  return latestCommunityMemberEntry(data.memberEntries, community);
+}
+
+/** The entry immediately before the current one for a community, or null. */
+export function previousCommunityMembers(
+  data: DashboardData,
+  community: CommunitySlug,
+): CommunityMemberEntry | null {
+  return previousCommunityMemberEntry(data.memberEntries, community);
+}
+
+/**
+ * Total members across every community — sum of each community's latest
+ * entry — plus the comparable "previous" base: the sum of each community's
+ * previous entry, but ONLY across communities that have one, so a community
+ * with just one entry on file doesn't silently contribute a false zero
+ * (which would understate the previous total rather than honestly having
+ * nothing to compare for that community).
+ */
+export function allCommunitiesMembers(
+  data: DashboardData,
+): { current: number; previous: number | null; anyPrevious: boolean } {
+  const current = COMMUNITIES.reduce(
+    (sum, c) => sum + (communityMembers(data, c.slug)?.total ?? 0),
+    0,
+  );
+  const previousEntries = COMMUNITIES.map((c) => previousCommunityMembers(data, c.slug)).filter(
+    (e): e is CommunityMemberEntry => e !== null,
+  );
+  return {
+    current,
+    previous: previousEntries.length > 0 ? previousEntries.reduce((s, e) => s + e.total, 0) : null,
+    anyPrevious: previousEntries.length > 0,
   };
 }
 
@@ -209,13 +249,16 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
     });
   }
 
-  const smallest = [...byCommunity].sort((a, b) => a.totals.members - b.totals.members)[0];
-  if (smallest && byCommunity.length > 1 && smallest.totals.members < 1000) {
-    const config = COMMUNITIES.find((c) => c.slug === smallest.community);
+  const communitiesWithMembers = COMMUNITIES.map((c) => ({
+    community: c,
+    total: communityMembers(data, c.slug)?.total ?? null,
+  })).filter((c): c is { community: (typeof COMMUNITIES)[number]; total: number } => c.total !== null);
+  const smallest = [...communitiesWithMembers].sort((a, b) => a.total - b.total)[0];
+  if (smallest && communitiesWithMembers.length > 1 && smallest.total < 1000) {
     takeaways.push({
       tag: 'New & small',
-      text: `${config?.label ?? smallest.community} is still building, at ` +
-        `${smallest.totals.members.toLocaleString('en-US')} members.`,
+      text: `${smallest.community.label} is still building, at ` +
+        `${smallest.total.toLocaleString('en-US')} members.`,
       tone: 'neutral',
     });
   }

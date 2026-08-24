@@ -131,30 +131,25 @@ export interface AiSummary {
 }
 
 /**
- * What one week of a WhatsApp chat export contributes to one group.
+ * What one manually-dated period of a WhatsApp chat export contributes to
+ * one group. Every figure here is auto-computed by lib/imports/whatsapp.ts
+ * from messages within the filed date range — nothing here is hand-typed.
  *
- * Every figure here is auto-computed by lib/imports/whatsapp.ts from the raw
- * export text — nothing here is hand-typed. `totalMembers` in particular is
- * not a snapshot value: it's the running count of every join/add minus every
- * leave/remove in the export, replayed from the group's creation through this
- * week's Sunday. That only works because the export is the FULL chat history,
- * re-uploaded (and re-parsed from scratch) each time — see the module doc in
- * whatsapp.ts.
+ * There is deliberately no member count here: WhatsApp exports don't
+ * reliably contain a group's full join/leave history (older events can be
+ * missing from an export depending on how far back WhatsApp retains them),
+ * so a replay-based total silently undercounts. Total membership is tracked
+ * separately as a manual entry per community — see CommunityMemberEntry.
  */
 export interface WhatsappFigures {
-  totalMembers: number;
-  newMembers: number;
-  joinsViaLink: number;
-  joinsAdded: number;
-  leaves: number;
   messageCount: number;
-  /** Distinct senders who posted at least one message this week. */
+  /** Distinct senders who posted at least one message this period. */
   uniqueActiveChatters: number;
-  /** Top senders by message count this week, most first. */
+  /** Top senders by message count this period, most first. */
   topVoices: Voice[];
-  /** Relative to this group's own trailing message-volume average, not a fixed threshold. */
+  /** Relative to this group's own previous filed period, not a fixed threshold. */
   activityLevel: ActivityLevel;
-  /** Ranked most-mentioned first — `mainTopics[0]` is the week's trending topic. */
+  /** Ranked most-mentioned first — `mainTopics[0]` is the period's trending topic. */
   mainTopics: string[];
   /** How many times `mainTopics[0]` was mentioned, or null when there were no topics at all. */
   topTopicMentions: number | null;
@@ -172,12 +167,12 @@ export interface WhatsappFigures {
  *     `community` is omitted entirely. `source` + `weekStart` is its natural
  *     key (see `importIdForGlobal`).
  *   - WhatsApp is per-group (`group` is set, `community` follows from it):
- *     one upload of the full chat history fills in every week the export
- *     covers, not just one — see lib/imports/whatsapp.ts and the imports API
+ *     each upload is filed under the manually-entered `periodStart`/
+ *     `periodEnd` range — see lib/imports/whatsapp.ts and the imports API
  *     route.
  *
- * Whichever scope applies, re-uploading the same export for the same week
- * replaces that week's numbers rather than adding to them.
+ * Whichever scope applies, re-uploading the same export for the same
+ * week/period replaces its numbers rather than adding to them.
  */
 export interface ImportedFile {
   id: string;
@@ -235,23 +230,29 @@ export interface Ga4Figures {
 
 /* ----------------------------------------------------------- derived shapes */
 
-/** Pooled figures for a community, or for every community at once. */
+/** Pooled message-level figures for a community, or for every community at once. */
 export interface RollupTotals {
-  members: number;
-  newMembers: number;
   messageCount: number;
   /** Sum of each group's own unique-chatter count — an upper bound, not a true cross-group union. */
   uniqueActiveChatters: number;
-  /**
-   * Sum of `previousTotalMembers` across groups that have one — the base the
-   * period-over-period comparison section is measured against. Only counts
-   * groups where a previous period is actually on file, so a group with no
-   * prior report doesn't silently contribute a false zero to the base.
-   */
-  previousMembers: number;
   /** How many groups have a WhatsApp import for their current period (drives every figure above). */
   groupsWithEntry: number;
   groupCount: number;
+}
+
+/**
+ * One manually-entered "total members" reading for a community, with the
+ * date it was entered as of. Communities keep a full history of these (one
+ * append-only log per community), so "vs. last entry" is always answerable
+ * and nothing is overwritten. See lib/community-members.ts.
+ */
+export interface CommunityMemberEntry {
+  community: CommunitySlug;
+  total: number;
+  /** The date this count is as of — manually chosen, defaults to today. */
+  enteredAt: string;
+  /** When the entry was actually saved — for "entered 2 days ago" style display. */
+  recordedAt: string;
 }
 
 /**
@@ -260,6 +261,9 @@ export interface RollupTotals {
  * lib/imports/whatsapp.ts) for the manually-entered date range it was filed
  * under, plus an AI-generated status tag/summary/narrative (see
  * lib/ai/groq.ts). Nothing here is hand-typed except the date range itself.
+ *
+ * Deliberately carries no member count — total membership is tracked at the
+ * community level as a manual entry, not per group. See CommunityMemberEntry.
  */
 export interface GroupPeriodMetrics {
   group: GroupSlug;
@@ -269,16 +273,6 @@ export interface GroupPeriodMetrics {
   periodEnd: string | null;
   /** True when a WhatsApp export has been parsed for this group's latest period. */
   hasWhatsapp: boolean;
-
-  totalMembers: number | null;
-  newMembers: number | null;
-  /** Growth vs. the previous filed period, as a percentage. */
-  memberGrowthPct: number | null;
-  /** The previous period's total, when known — what memberGrowthPct is computed against. */
-  previousTotalMembers: number | null;
-  /** The previous period's own date range, when known — for "vs 5-11 Aug" style labels. */
-  previousPeriodStart: string | null;
-  previousPeriodEnd: string | null;
 
   messageCount: number | null;
   uniqueActiveChatters: number | null;

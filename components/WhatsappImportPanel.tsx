@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { GroupSlug, ImportedFile } from '@/lib/types';
 import type { SourceInfo } from '@/components/ImportPanel';
+import { DateRangeFields } from '@/components/DateRangeFields';
 import { formatRelativeTime } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { splitNotes } from '@/lib/notes';
@@ -50,6 +51,22 @@ export function WhatsappImportPanel({
   } | null>(null);
 
   const working = busy || isPending;
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // A visible "still working" signal that grows over time, rather than a
+  // static "loading…" that reads the same at 1s and 45s — a slow upload
+  // (a big export, or a slow Groq call) previously looked identical to a
+  // stalled one, which is what made a retry feel necessary even when the
+  // first attempt was still genuinely in flight.
+  useEffect(() => {
+    if (!busy) {
+      setElapsedSec(0);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => setElapsedSec(Math.round((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
 
   const latestUpload = [...existing].sort((a, b) => ((a.periodStart ?? '') < (b.periodStart ?? '') ? 1 : -1))[0] ?? null;
   const periodsFiled = existing.length;
@@ -80,7 +97,19 @@ export function WhatsappImportPanel({
         warnings?: string[];
         aiGenerated?: boolean;
       };
-      if (!res.ok) throw new Error(payload.error ?? `Upload failed (${res.status})`);
+      if (!res.ok) {
+        // A killed serverless function (timeout, memory limit) often comes
+        // back with a gateway status and no JSON body at all — payload.error
+        // is then undefined, so say something more useful than "Upload
+        // failed (504)" for the two statuses that actually mean that.
+        const fallback =
+          res.status === 504
+            ? 'The server took too long to process this export and timed out. Try again — large exports can take a while.'
+            : res.status === 413
+              ? 'That file is too large for this upload.'
+              : `Upload failed (${res.status}).`;
+        throw new Error(payload.error ?? fallback);
+      }
 
       setResult({
         periodStart: payload.periodStart ?? null,
@@ -91,7 +120,15 @@ export function WhatsappImportPanel({
       });
       startTransition(() => router.refresh());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      // A network-level failure (connection dropped mid-upload, DNS hiccup)
+      // throws a plain TypeError with a terse message like "Failed to
+      // fetch" — worth naming explicitly rather than showing that raw text,
+      // since it's easy to mistake for "nothing happened".
+      if (err instanceof TypeError) {
+        setError('Lost connection during the upload. Check your connection and try again.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Upload failed.');
+      }
     } finally {
       setBusy(false);
       // Clear the picker so re-selecting the same filename still fires onChange.
@@ -123,27 +160,15 @@ export function WhatsappImportPanel({
             </div>
           </div>
 
-          <div className="impRow__controls">
-            <label className="field">
-              <span className="field__label">Report start date</span>
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-                disabled={working}
-              />
-            </label>
-
-            <label className="field">
-              <span className="field__label">Report end date</span>
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                disabled={working}
-              />
-            </label>
-          </div>
+          <DateRangeFields
+            start={periodStart}
+            end={periodEnd}
+            onStartChange={setPeriodStart}
+            onEndChange={setPeriodEnd}
+            startLabel="Report start date"
+            endLabel="Report end date"
+            disabled={working}
+          />
 
           <label className="field">
             <span className="field__label">
@@ -167,7 +192,15 @@ export function WhatsappImportPanel({
             total as of the end date.
           </p>
 
-          {working ? <p className="impRow__status">Reading the export…</p> : null}
+          {working ? (
+            <p className="impRow__status impRow__status--busy" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              {busy
+                ? `Reading the export and generating this report${elapsedSec > 0 ? ` — ${elapsedSec}s` : ''}…`
+                : 'Finishing up…'}
+              {elapsedSec > 15 ? ' Large exports can take a minute — this is still working.' : ''}
+            </p>
+          ) : null}
 
           {error ? (
             <p className="formMsg formMsg--err" role="alert">

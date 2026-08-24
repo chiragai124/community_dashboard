@@ -4,6 +4,10 @@ import { saveCommunitySummary } from '@/lib/ai/store';
 import { getImports, latestGroupPeriod } from '@/lib/imports';
 import { getCommunity, groupsOf, isCommunitySlug } from '@/lib/groups';
 
+// The Groq call here can run long enough to exceed Vercel's default (10s on
+// Hobby) function timeout — see app/api/imports/route.ts's maxDuration.
+export const maxDuration = 60;
+
 /**
  * POST { community } — regenerate the "Main Topics Discussed" pill list and
  * narrative for one community, synthesised from its groups' latest filed

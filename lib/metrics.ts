@@ -17,21 +17,15 @@ export function pct(numerator: number, denominator: number | null | undefined): 
 /* --------------------------------------------------------- the main assembler */
 
 /**
- * Everything auto-computed for one group's latest filed report period, plus
- * the comparison against whatever period was filed immediately before it.
- * `latest`/`previous` are this group's own `ImportedFile` rows (WhatsApp
- * source only) — already picked out by the caller (see lib/dashboard.ts).
+ * Everything auto-computed for one group's filed report period. `latest` is
+ * this group's own `ImportedFile` row (WhatsApp source only) — already
+ * picked out by the caller (see lib/dashboard.ts).
  */
 export function buildGroupPeriodMetrics(
   group: GroupSlug,
   latest: ImportedFile | null,
-  previous: ImportedFile | null,
 ): GroupPeriodMetrics {
   const whatsapp = latest?.whatsapp ?? null;
-  const prevWhatsapp = previous?.whatsapp ?? null;
-
-  const totalMembers = whatsapp?.totalMembers ?? null;
-  const previousTotalMembers = prevWhatsapp?.totalMembers ?? null;
 
   return {
     group,
@@ -39,16 +33,6 @@ export function buildGroupPeriodMetrics(
     periodStart: latest?.periodStart ?? null,
     periodEnd: latest?.periodEnd ?? null,
     hasWhatsapp: whatsapp !== null,
-
-    totalMembers,
-    newMembers: whatsapp?.newMembers ?? null,
-    memberGrowthPct:
-      totalMembers !== null && previousTotalMembers !== null && previousTotalMembers > 0
-        ? ((totalMembers - previousTotalMembers) / previousTotalMembers) * 100
-        : null,
-    previousTotalMembers,
-    previousPeriodStart: previous?.periodStart ?? null,
-    previousPeriodEnd: previous?.periodEnd ?? null,
 
     messageCount: whatsapp?.messageCount ?? null,
     uniqueActiveChatters: whatsapp?.uniqueActiveChatters ?? null,

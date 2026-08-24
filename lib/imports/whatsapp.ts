@@ -5,21 +5,15 @@ import { listZipEntries, readZipEntryData } from '../zip';
 import { ImportError } from './shortio';
 
 /**
- * Turning a WhatsApp export into figures for one manually-entered date range.
+ * Turning a WhatsApp export into message-level figures for one
+ * manually-entered date range.
  *
- * The export is expected to be the group's FULL history, re-downloaded (and
- * re-parsed from scratch) each time it's uploaded — not a slice matching the
- * filed period. That is what makes `totalMembers` derivable at all: a chat
- * export has no "member count" field anywhere in it, only join/add/leave/
- * remove system messages, so the only way to know how many members a group
- * has is to replay every one of those events from the group's creation
- * through the end of the filed period. A partial export would give a
- * partial (and silently wrong) replay.
- *
- * Topics, sentiment, active-chatter counts and activity level are NOT
- * replayed from the start — those describe the filed period's own
- * conversation, so they're computed only from messages inside it, regardless
- * of how much history the export actually contains around them.
+ * Deliberately does NOT compute a member count: an export's join/add/leave/
+ * remove system messages are not a reliable full history (WhatsApp doesn't
+ * guarantee older events survive in a given export, depending on export
+ * settings and app version), so a replay-based total silently undercounts.
+ * Total membership is tracked separately as a manual entry per community —
+ * see lib/community-members.ts.
  *
  * Everything here is a local heuristic (word lists and frequency counts, no
  * network call) — this app has no API keys and nothing it reads ever leaves
@@ -72,12 +66,6 @@ export function extractChatTextFromZip(buffer: Buffer, filename: string): { text
 }
 
 /* -------------------------------------------------------------- line parsing */
-
-interface RawEvent {
-  date: Date;
-  kind: 'join' | 'leave';
-  method: 'link' | 'added';
-}
 
 interface RawMessage {
   date: Date;
@@ -160,46 +148,16 @@ function toDate(
 }
 
 /**
- * Known join/leave system-message shapes, tried in order.
- *
- * Joins and leaves are NOT symmetric by accident: WhatsApp shows both an
- * active form ("Bob added Alice", "Bob removed Alice") and a passive one
- * where the actor isn't named ("Alice was added", "Alice was removed" — this
- * happens e.g. when the actor's own account is no longer resolvable). A
- * missing passive-leave pattern here previously meant some real departures
- * were silently uncounted, which overcounts current membership by exactly
- * that many people — the passive forms for both directions are required for
- * the replay to balance.
- */
-const EVENT_PATTERNS: {
-  re: RegExp;
-  build: (m: RegExpMatchArray) => Omit<RawEvent, 'date'>;
-}[] = [
-  { re: /^.+? joined using this group'?s invite link$/i, build: () => ({ kind: 'join', method: 'link' }) },
-  { re: /^.+? joined from the community$/i, build: () => ({ kind: 'join', method: 'link' }) },
-  { re: /^.+? was added$/i, build: () => ({ kind: 'join', method: 'added' }) },
-  { re: /^.+? added .+$/i, build: () => ({ kind: 'join', method: 'added' }) },
-  { re: /^.+? was removed$/i, build: () => ({ kind: 'leave', method: 'added' }) },
-  { re: /^.+? removed .+$/i, build: () => ({ kind: 'leave', method: 'added' }) },
-  { re: /^.+? left( the group)?$/i, build: () => ({ kind: 'leave', method: 'added' }) },
-];
-
-/**
- * Other system lines: recognised so they don't get mis-parsed as messages or
- * as a join/leave, but not counted as anything.
- *
- * Checked BEFORE `EVENT_PATTERNS`, which matters for admin promotions and
- * demotions: "Bob removed Alice as admin" and "Bob added Alice as admin" are
- * NOT departures or joins — they only change admin status — but they'd
- * otherwise match the generic "removed"/"added" event patterns above and get
- * miscounted as a real leave/join. Matching the admin wording here first
- * routes them to "ignored" instead.
+ * Known system-message shapes (joins, leaves, admin changes, group settings
+ * changes, and the like): recognised so they're never mis-parsed as a real
+ * chat message, but not counted as anything — this module no longer tracks
+ * membership at all (see the module doc), so joins/leaves don't need their
+ * own event type, just exclusion from the message stream.
  */
 const IGNORED_SYSTEM_RE =
-  /(end-to-end encrypted|created (this )?group|changed the (subject|group description|icon)|changed this group'?s icon|changed their phone number|security code (with|changed)|(removed|added) .+ as (an )?admin|now an admin|is an admin|no longer an admin|disappearing messages|message was deleted|deleted this message|pinned a message|changed the group settings|turned off admin approval|turned on admin approval|reset (this|the) group'?s invite link|group settings changed)/i;
+  /(end-to-end encrypted|created (this )?group|changed the (subject|group description|icon)|changed this group'?s icon|changed their phone number|security code (with|changed)|(removed|added) .+ as (an )?admin|now an admin|is an admin|no longer an admin|disappearing messages|message was deleted|deleted this message|pinned a message|changed the group settings|turned off admin approval|turned on admin approval|reset (this|the) group'?s invite link|group settings changed|joined using this group'?s invite link|joined from the community|was added$|was removed$|^.+? added .+$|^.+? removed .+$|left( the group)?$)/i;
 
 export interface ParsedWhatsapp {
-  events: RawEvent[];
   messages: RawMessage[];
   /** System lines that matched neither a known event nor a known ignore pattern. */
   unrecognizedSystemLines: number;
@@ -224,14 +182,13 @@ export interface ParsedWhatsapp {
 }
 
 /**
- * Parse the raw export into a flat, chronological list of events and
- * messages. A line with no timestamp prefix continues the previous message
- * (WhatsApp wraps a multi-line message this way).
+ * Parse the raw export into a flat, chronological list of messages. A line
+ * with no timestamp prefix continues the previous message (WhatsApp wraps a
+ * multi-line message this way).
  */
 export function parseWhatsappExport(text: string): ParsedWhatsapp {
   const { format, confident } = inferDateFormat(text);
 
-  const events: RawEvent[] = [];
   const messages: RawMessage[] = [];
   let unrecognizedSystemLines = 0;
   const unrecognizedExamples: string[] = [];
@@ -274,15 +231,7 @@ export function parseWhatsappExport(text: string): ParsedWhatsapp {
 
     current = null; // the previous message, if any, is done — a new line has started
 
-    // Checked before EVENT_PATTERNS — see IGNORED_SYSTEM_RE's doc comment.
     if (IGNORED_SYSTEM_RE.test(rest)) continue;
-
-    const eventMatch = EVENT_PATTERNS.find((p) => p.re.test(rest));
-    if (eventMatch) {
-      const m = eventMatch.re.exec(rest);
-      if (m) events.push({ date, ...eventMatch.build(m) });
-      continue;
-    }
 
     // A real message is always "Sender: text" — system notices never contain
     // that separator, so its absence here means an unrecognised system line.
@@ -299,7 +248,6 @@ export function parseWhatsappExport(text: string): ParsedWhatsapp {
   }
 
   return {
-    events,
     messages,
     unrecognizedSystemLines,
     unrecognizedExamples,
@@ -503,7 +451,6 @@ export function extractWhatsapp(
   previousMessageCount: number | null,
 ): WhatsappExtract {
   const {
-    events,
     messages,
     unrecognizedSystemLines,
     unrecognizedExamples,
@@ -515,9 +462,9 @@ export function extractWhatsapp(
     dateFormatConfident,
   } = parseWhatsappExport(text);
 
-  if (events.length === 0 && messages.length === 0) {
+  if (messages.length === 0) {
     throw new ImportError(
-      `${filename} produced no readable messages or join/leave events. ` +
+      `${filename} produced no readable messages. ` +
         (matchedStartLines === 0 && totalLines > 0
           ? `None of this file's ${totalLines} line(s) matched a recognised WhatsApp timestamp format at ` +
             'all — check this is really an "Export chat" file, not a converted, reformatted, or ' +
@@ -526,28 +473,12 @@ export function extractWhatsapp(
     );
   }
 
-  const allDates = [...events.map((e) => e.date), ...messages.map((m) => m.date)];
-  const earliest = new Date(Math.min(...allDates.map((d) => d.getTime())));
-  const latest = new Date(Math.max(...allDates.map((d) => d.getTime())));
-
-  // Replay every event up through the end of range.end — the running total
-  // as of that moment is this period's member count.
-  const rangeEndExclusive = parseISODateUTC(range.end) + 24 * 60 * 60 * 1000;
-  const sortedEvents = [...events].sort((a, b) => a.date.getTime() - b.date.getTime());
-  let totalMembers = 0;
-  for (const event of sortedEvents) {
-    if (event.date.getTime() >= rangeEndExclusive) break;
-    totalMembers += event.kind === 'join' ? 1 : -1;
-  }
-  totalMembers = Math.max(0, totalMembers);
+  const earliest = new Date(Math.min(...messages.map((m) => m.date.getTime())));
+  const latest = new Date(Math.max(...messages.map((m) => m.date.getTime())));
 
   const rangeStartMs = parseISODateUTC(range.start);
+  const rangeEndExclusive = parseISODateUTC(range.end) + 24 * 60 * 60 * 1000;
   const withinRange = (d: Date) => d.getTime() >= rangeStartMs && d.getTime() < rangeEndExclusive;
-
-  const rangeEvents = events.filter((e) => withinRange(e.date));
-  const joinsViaLink = rangeEvents.filter((e) => e.kind === 'join' && e.method === 'link').length;
-  const joinsAdded = rangeEvents.filter((e) => e.kind === 'join' && e.method === 'added').length;
-  const leaves = rangeEvents.filter((e) => e.kind === 'leave').length;
 
   const rangeMessageEntries = messages.filter((m) => withinRange(m.date));
   const rangeMessages = rangeMessageEntries.map((m) => m.text);
@@ -566,11 +497,6 @@ export function extractWhatsapp(
   const { uniqueActiveChatters, topVoices } = extractTopVoices(rangeMessageEntries);
 
   const figures: WhatsappFigures = {
-    totalMembers,
-    newMembers: joinsViaLink + joinsAdded - leaves,
-    joinsViaLink,
-    joinsAdded,
-    leaves,
     messageCount,
     uniqueActiveChatters,
     topVoices,
@@ -585,25 +511,17 @@ export function extractWhatsapp(
     .slice(0, 400)
     .map((m) => ({ sender: m.sender, text: m.text.slice(0, 500) }));
 
-  const totalJoins = events.filter((e) => e.kind === 'join').length;
-  const totalLeaves = events.filter((e) => e.kind === 'leave').length;
   const notes = [
-    `${totalJoins} join(s), ${totalLeaves} leave(s), ${messages.length} message(s) parsed from the ` +
-      `full export (${toISODate(earliest)} to ${toISODate(latest)}); ${messageCount} of those ` +
-      `message(s) fall within the filed period. Dates read as ` +
-      `${dateFormat === 'day-first' ? 'day/month/year' : 'month/day/year'}` +
+    `${messages.length} message(s) parsed from the full export (${toISODate(earliest)} to ` +
+      `${toISODate(latest)}); ${messageCount} of those message(s) fall within the filed period. ` +
+      `Dates read as ${dateFormat === 'day-first' ? 'day/month/year' : 'month/day/year'}` +
       (dateFormatConfident
         ? '.'
         : ' (assumed — nothing in this file had an unambiguous date to confirm it).'),
   ];
   if (unrecognizedSystemLines > 0) {
-    // If any of these are actually a join or leave phrased in a way this
-    // parser doesn't recognise yet, membership will be off by that many —
-    // shown verbatim (not just a count) so a mismatch is diagnosable without
-    // re-reading the whole export.
     notes.push(
-      `${unrecognizedSystemLines} unrecognised system-message line(s) ignored — if member ` +
-        `count looks off, check whether any of these are really a join or leave: ` +
+      `${unrecognizedSystemLines} unrecognised system-message line(s) ignored: ` +
         unrecognizedExamples.map((line) => `"${line}"`).join('; ') +
         (unrecognizedSystemLines > unrecognizedExamples.length ? ', …' : '.'),
     );
@@ -612,9 +530,9 @@ export function extractWhatsapp(
   const warnings: string[] = [];
 
   // A recognition rate this low means the file's own timestamp format
-  // probably isn't matching this parser at all, and the few events/messages
-  // above only parsed by coincidence — the figures are likely garbage, not
-  // just an incomplete but honest read.
+  // probably isn't matching this parser at all, and the few messages above
+  // only parsed by coincidence — the figures are likely garbage, not just
+  // an incomplete but honest read.
   if (totalLines > 0 && matchedStartLines / totalLines < 0.5) {
     const pctRecognized = Math.round((matchedStartLines / totalLines) * 100);
     warnings.push(
