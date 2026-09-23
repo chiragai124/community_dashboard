@@ -155,11 +155,11 @@ export function WhatsappImportPanel({
         <span className="qual__chevron" aria-hidden="true">
           ▶
         </span>
-        <span className="qual__summaryLabel">Import WhatsApp chat</span>
+        <span className="qual__summaryLabel">Import this group&rsquo;s chat on its own</span>
         <span className="qual__summaryHint">
           {latestUpload && latestUpload.periodStart && latestUpload.periodEnd
-            ? `${info.label} — latest report: ${formatDateRange(latestUpload.periodStart, latestUpload.periodEnd)}`
-            : `${info.label} — upload ${groupLabel}'s chat export`}
+            ? `Fallback upload — ${groupLabel}'s latest report: ${formatDateRange(latestUpload.periodStart, latestUpload.periodEnd)}`
+            : `Fallback upload — use the community tab unless this export can't be matched`}
         </span>
       </summary>
       <div className="imp__body">

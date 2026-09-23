@@ -1,4 +1,11 @@
-import type { CommunitySlug, Ga4Figures, ImportedFile, ShortioFigures } from '../types';
+import type {
+  CommunitySlug,
+  DailyRow,
+  Ga4Figures,
+  ImportedFile,
+  LinkClicks,
+  ShortioFigures,
+} from '../types';
 import type { ReportPeriod } from '../reports';
 import { formatDateRange } from '../period';
 import { daysWithin, lastDays, sumMetric } from './daily';
@@ -134,17 +141,34 @@ function resolve<T>(
   }
 
   if (fallback.file.daily && fallback.file.daily.length > 0) {
-    const days = lastDays(fallback.file.daily, periodLength(period));
+    // An export filed under an earlier period can still *contain* this
+    // period's days — exporting a whole month and filing the first week out
+    // of it is normal. Those days are a real measurement of this period, not
+    // a stand-in, so they're preferred over the export's trailing days and
+    // said so plainly.
+    const within = daysWithin(fallback.file.daily, period.start, period.end);
+    const trailing = lastDays(fallback.file.daily, periodLength(period));
+    const days = within.length > 0 ? within : trailing;
     const rebuilt = days.length > 0 ? rebuild(fallback.file, days) : null;
     if (rebuilt) {
       return {
         figures: rebuilt,
-        origin: 'resliced',
+        // Days from inside the period are a measurement; the export's
+        // trailing days are a stand-in, and must carry the same warning
+        // treatment as carrying totals forward whole.
+        origin: within.length > 0 ? 'resliced' : 'carried-forward',
         from: fallback.file,
         note:
-          `No export uploaded for this period, so the most recent ${days.length} day(s) ` +
-          `(${formatDateRange(days[0].date, days[days.length - 1].date)}) were taken from the ` +
-          `export covering ${formatDateRange(fallback.range.start, fallback.range.end)}.`,
+          within.length > 0
+            ? `No export was uploaded for this period, but the one covering ` +
+              `${formatDateRange(fallback.range.start, fallback.range.end)} carries day-by-day ` +
+              `rows that include ${days.length} day(s) of it — these figures are summed from ` +
+              `those days.`
+            : `No export uploaded for this period, and the most recent one ` +
+              `(${formatDateRange(fallback.range.start, fallback.range.end)}) has no rows inside ` +
+              `it. These are its last ${days.length} day(s), ` +
+              `${formatDateRange(days[0].date, days[days.length - 1].date)} — a stand-in, not ` +
+              `this period's figures.`,
       };
     }
   }
@@ -163,22 +187,39 @@ function resolve<T>(
 
 /* ------------------------------------------------------------------ GA4 -- */
 
+/**
+ * GA4 figures summed over a set of days, or null when those days carry no
+ * usable metric.
+ *
+ * Exported because the same slice happens twice: once at upload, when an
+ * export covering a wider window is filed under a narrower period, and again
+ * later when a period with no export of its own reuses an earlier one. Both
+ * must produce the same number from the same days.
+ */
+export function ga4FromDays(days: DailyRow[]): Ga4Figures | null {
+  const figures: Ga4Figures = {
+    activeUsers: sumMetric(days, 'activeUsers'),
+    newUsers: sumMetric(days, 'newUsers'),
+    sessions: sumMetric(days, 'sessions'),
+  };
+  const anything =
+    figures.activeUsers !== null || figures.newUsers !== null || figures.sessions !== null;
+  return anything ? figures : null;
+}
+
+/** Short.io figures for a set of days. See `resolveShortio` on why links can't be sliced. */
+export function shortioFromDays(days: DailyRow[], links: LinkClicks[]): ShortioFigures | null {
+  const total = sumMetric(days, 'clicks');
+  return total === null ? null : { totalClicks: total, links };
+}
+
 /** Landing-page traffic for a period. GA4 is never community-scoped. */
 export function resolveGa4(files: ImportedFile[], period: ReportPeriod): ResolvedImport<Ga4Figures> {
   return resolve<Ga4Figures>(
     files.filter((f) => f.source === 'ga4'),
     period,
     (file) => file.ga4 ?? null,
-    (_file, days) => {
-      const figures: Ga4Figures = {
-        activeUsers: sumMetric(days, 'activeUsers'),
-        newUsers: sumMetric(days, 'newUsers'),
-        sessions: sumMetric(days, 'sessions'),
-      };
-      const anything =
-        figures.activeUsers !== null || figures.newUsers !== null || figures.sessions !== null;
-      return anything ? figures : null;
-    },
+    (_file, days) => ga4FromDays(days),
   );
 }
 
@@ -203,11 +244,7 @@ export function resolveShortio(
     files.filter((f) => f.source === 'shortio' && f.community === community),
     period,
     (file) => file.shortio ?? null,
-    (file, days) => {
-      const total = sumMetric(days, 'clicks');
-      if (total === null) return null;
-      return { totalClicks: total, links: file.shortio?.links ?? [] };
-    },
+    (file, days) => shortioFromDays(days, file.shortio?.links ?? []),
   );
 
   if (resolved.origin === 'resliced' && (resolved.figures?.links.length ?? 0) > 0) {

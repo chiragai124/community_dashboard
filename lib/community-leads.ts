@@ -1,6 +1,6 @@
 import type { CommunitySlug } from './types';
 import { isCommunitySlug } from './groups';
-import { createEntryLog, entryAsOf, entryBefore, type LogEntry } from './entry-log';
+import { createEntryLog, historyOf, type LogEntry } from './entry-log';
 
 /**
  * "Leads added to the CRM this period", one append-only history per
@@ -40,23 +40,27 @@ export function saveCommunityLeadEntry(
 }
 
 /**
- * Leads recorded for the report period ending at `periodEnd` — the latest
- * entry dated on or before it. A report for a past period keeps reporting
- * the figure that was current then, not whatever has been entered since.
+ * Leads recorded *inside* a report period, or null when none was entered for
+ * it.
+ *
+ * Deliberately not "the latest entry on or before the period end", which is
+ * how member totals resolve. A member total is a level: last month's reading
+ * is still the best answer until a new one arrives. Leads are a flow — a
+ * count of what came in during a window — so carrying an entry forward would
+ * report the same 64 leads again in every subsequent report until someone
+ * typed a new number, inflating the funnel indefinitely.
+ *
+ * Null means "not entered for this period", and the funnel says so rather
+ * than showing a figure that belongs to an earlier one.
  */
-export function communityLeadsAsOf(
+export function communityLeadsIn(
   entries: CommunityLeadEntry[],
   community: CommunitySlug,
-  periodEnd: string,
+  period: { start: string; end: string },
 ): CommunityLeadEntry | null {
-  return entryAsOf(entries, community, periodEnd);
-}
-
-/** The reading current before `periodStart` — the previous report's figure. */
-export function communityLeadsBefore(
-  entries: CommunityLeadEntry[],
-  community: CommunitySlug,
-  periodStart: string,
-): CommunityLeadEntry | null {
-  return entryBefore(entries, community, periodStart);
+  const inside = historyOf(entries, community).filter(
+    (e) => e.enteredAt >= period.start && e.enteredAt <= period.end,
+  );
+  // Latest wins if the period somehow holds two — the most recent correction.
+  return inside[inside.length - 1] ?? null;
 }

@@ -64,7 +64,8 @@ export function MemberCountTable({
     <section className="card">
       <div className="card__head">
         <div>
-          <div className="card__title">Member count</div>
+          {/* No title: the section heading above already says "Member count",
+              and repeating it puts the same words twice in a row. */}
           <div className="card__sub">
             {previousLabel
               ? `Total members per community, against the report filed for ${previousLabel}.`
@@ -146,7 +147,6 @@ export function InstagramSection({
     <section className="card">
       <div className="card__head">
         <div>
-          <div className="card__title">Instagram broadcast channel</div>
           <div className="card__sub">
             {createdOn
               ? `Created ${createdOn}${weeks !== null ? ` · running for ${weeks} week${weeks === 1 ? '' : 's'}` : ''}`
@@ -216,7 +216,6 @@ export function LeadsFunnel({
     <section className="card">
       <div className="card__head">
         <div>
-          <div className="card__title">Accommodation poll &amp; follow-up funnel</div>
           <div className="card__sub">
             Leads added to the CRM during this period, entered per community.
           </div>

@@ -19,7 +19,6 @@ import { formatDateRange } from '@/lib/period';
  * not.
  */
 export function NumberEntryForm({
-  title,
   subtitle,
   valueLabel,
   endpoint,
@@ -29,7 +28,6 @@ export function NumberEntryForm({
   period,
   placeholder,
 }: {
-  title: string;
   subtitle: string;
   valueLabel: string;
   endpoint: string;
@@ -82,10 +80,9 @@ export function NumberEntryForm({
   return (
     <section className="card">
       <div className="card__head">
-        <div>
-          <div className="card__title">{title}</div>
-          <div className="card__sub">{subtitle}</div>
-        </div>
+        {/* No title: every use of this form sits directly under a section
+            heading that already names the figure being entered. */}
+        <div className="card__sub">{subtitle}</div>
       </div>
       <div className="card__body">
         <div className="impRow__controls">

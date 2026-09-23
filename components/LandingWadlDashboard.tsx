@@ -35,6 +35,11 @@ export interface LandingWadlProps {
   shortioPoints: { week: string; value: number | null }[];
   /** e.g. "vs 9 - 15 Sep" — names which report the arrows compare against. */
   previousLabel: string | null;
+  /**
+   * False on the Landing page tab, whose own page title already says this.
+   * The Overview needs it, since this is one section among several there.
+   */
+  showHeading?: boolean;
 }
 
 /**
@@ -63,6 +68,7 @@ export function LandingWadlDashboard({
   ga4Rows,
   shortioPoints,
   previousLabel,
+  showHeading = true,
 }: LandingWadlProps) {
   const deltaSuffix = previousLabel ? `vs ${previousLabel}` : undefined;
 
@@ -90,12 +96,14 @@ export function LandingWadlDashboard({
 
   return (
     <section className="wadl">
-      <div className="wadl__head">
-        <h2 className="sectionTitle" style={{ margin: 0 }}>
-          Landing page &amp; WADL
-        </h2>
-        <span className="wadl__period">{formatDateRange(period.start, period.end)}</span>
-      </div>
+      {showHeading ? (
+        <div className="wadl__head">
+          <h2 className="sectionTitle" style={{ margin: 0 }}>
+            Landing page &amp; WADL
+          </h2>
+          <span className="wadl__period">{formatDateRange(period.start, period.end)}</span>
+        </div>
+      ) : null}
 
       <div className="wadl__panels">
         {/* ------------------------------------------------------- GA4 --- */}

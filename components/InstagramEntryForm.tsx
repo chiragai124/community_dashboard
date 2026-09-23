@@ -78,11 +78,9 @@ export function InstagramEntryForm({
   return (
     <section className="card">
       <div className="card__head">
-        <div>
-          <div className="card__title">Update Instagram broadcast channel</div>
-          <div className="card__sub">
-            The member count is entered each report; the creation date is set once.
-          </div>
+        <div className="card__sub">
+          Update this channel — the member count is entered each report; the creation date is set
+          once.
         </div>
       </div>
       <div className="card__body">

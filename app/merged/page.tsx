@@ -81,6 +81,7 @@ export default async function LandingPageAndWadl({
           ga4Rows={ga4Rows}
           shortioPoints={shortioReportSeries(data, (s) => s?.totalClicks ?? null, 12)}
           previousLabel={previousLabel}
+          showHeading={false}
         />
 
         <h2 className="sectionTitle">Imports</h2>

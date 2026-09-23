@@ -64,15 +64,20 @@ function splitSections(text: string): Section[] {
 
   const flush = () => {
     const dataRows = body.filter((r) => r.some((c) => c.trim() !== ''));
-    if (dataRows.length > 0) {
-      sections.push({
-        comments,
-        header: dataRows[0].map((c) => c.trim()),
-        rows: dataRows.slice(1),
-      });
-    }
-    comments = [];
     body = [];
+    // No rows means this wasn't a section at all — just a comment block
+    // followed by a blank line, which is how GA4 writes the file's own
+    // header. Clearing `comments` here would throw that header away, and
+    // with it the `YYYYMMDD-YYYYMMDD` line that says which window the whole
+    // export covers. So the comments carry forward to the next real section
+    // instead.
+    if (dataRows.length === 0) return;
+    sections.push({
+      comments,
+      header: dataRows[0].map((c) => c.trim()),
+      rows: dataRows.slice(1),
+    });
+    comments = [];
   };
 
   for (const row of rows) {

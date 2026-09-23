@@ -18,7 +18,7 @@ import {
   previousCommunityLeads,
   previousCommunityMembers,
 } from '@/lib/dashboard';
-import { getCommunity, getGroup, importsFor } from '@/lib/groups';
+import { getCommunity, getGroup, importsFor, singularize } from '@/lib/groups';
 import { SOURCE_META } from '@/lib/imports';
 import { formatExact } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
@@ -67,6 +67,10 @@ export default async function CommunityPage({
   const previousLabel = data.previous
     ? formatDateRange(data.previous.periodStart, data.previous.periodEnd)
     : null;
+
+  // "Groups" reads as "Messages by groups" and "Groups snapshots"; both want
+  // the singular, since they describe one of them each.
+  const groupNounSingular = singularize(community.groupNoun);
 
   const summaries = await getCommunitySummaries();
 
@@ -132,18 +136,17 @@ export default async function CommunityPage({
             value={formatExact(totals.uniqueActiveChatters)}
           />
           <StatCard
-            label={`Most active ${community.groupNoun.toLowerCase().replace(/s$/, '')}: ${busiestGroup?.label ?? '—'}`}
+            label={`Most active ${groupNounSingular.toLowerCase()}: ${busiestGroup?.label ?? '—'}`}
             value={busiest ? formatExact(busiest.messageCount) : '—'}
           />
           <StatCard
-            label={`Quietest ${community.groupNoun.toLowerCase().replace(/s$/, '')}: ${quietestGroup?.label ?? '—'}`}
+            label={`Quietest ${groupNounSingular.toLowerCase()}: ${quietestGroup?.label ?? '—'}`}
             value={quietest ? formatExact(quietest.messageCount) : '—'}
           />
         </div>
 
         <h2 className="sectionTitle">Total members</h2>
         <NumberEntryForm
-          title="Update total members"
           subtitle="Entered by hand — kept as a dated history, so every report keeps its own figure."
           valueLabel="Total members"
           endpoint="/api/community-members"
@@ -163,7 +166,6 @@ export default async function CommunityPage({
 
         <h2 className="sectionTitle">Leads added to CRM</h2>
         <NumberEntryForm
-          title="Leads added this period"
           subtitle="How many leads this community added to the CRM during the reporting period."
           valueLabel="Leads added"
           endpoint="/api/community-leads"
@@ -182,7 +184,7 @@ export default async function CommunityPage({
           </p>
         ) : null}
 
-        <h2 className="sectionTitle">Messages by {community.groupNoun.toLowerCase()}</h2>
+        <h2 className="sectionTitle">Messages by {groupNounSingular.toLowerCase()}</h2>
         <section className="card">
           <div className="card__body">
             <div className="bars">
@@ -229,7 +231,7 @@ export default async function CommunityPage({
           </div>
         </section>
 
-        <h2 className="sectionTitle">{community.groupNoun} snapshots</h2>
+        <h2 className="sectionTitle">{groupNounSingular} snapshots</h2>
         <div className="grid grid--snapshots">
           {perGroup.map((metrics) => (
             <SnapshotCard key={metrics.group} metrics={metrics} />

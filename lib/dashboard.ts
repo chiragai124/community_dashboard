@@ -14,8 +14,7 @@ import {
   getCommunityMemberEntries,
 } from './community-members';
 import {
-  communityLeadsAsOf,
-  communityLeadsBefore,
+  communityLeadsIn,
   getCommunityLeadEntries,
   type CommunityLeadEntry,
 } from './community-leads';
@@ -223,19 +222,26 @@ export function previousCommunityMembers(
 
 /* ------------------------------------------------------------------- leads */
 
-/** Leads one community added during this period, or null if none was entered. */
+/** Leads one community added during this period, or null if none was entered for it. */
 export function communityLeads(data: DashboardData, community: CommunitySlug): number | null {
-  return communityLeadsAsOf(data.leadEntries, community, data.period.end)?.value ?? null;
+  return communityLeadsIn(data.leadEntries, community, data.period)?.value ?? null;
 }
 
-/** What that community reported at the last report. */
+/**
+ * What that community reported at the last report.
+ *
+ * Only a filed report answers this. Leads are a flow, so there is no "reading
+ * that was current before this period" to fall back on the way there is for a
+ * member total — without a previous report there is simply nothing to compare
+ * against, and the funnel shows no arrow.
+ */
 export function previousCommunityLeads(
   data: DashboardData,
   community: CommunitySlug,
 ): number | null {
-  const fromReport = data.previous?.snapshot.communities.find((c) => c.community === community);
-  if (fromReport && fromReport.leads !== null) return fromReport.leads;
-  return communityLeadsBefore(data.leadEntries, community, data.period.start)?.value ?? null;
+  return (
+    data.previous?.snapshot.communities.find((c) => c.community === community)?.leads ?? null
+  );
 }
 
 /**
@@ -485,6 +491,20 @@ export function liveSnapshot(data: DashboardData): ReportSnapshot {
 export async function refreshReport(period: ReportPeriod): Promise<void> {
   const data = await loadDashboard(`${period.start}:${period.end}`);
   await upsertReport(period, liveSnapshot(data));
+}
+
+/**
+ * Refresh every filed report, for something that invalidates all of them at
+ * once — wiping the import store, say. Returns how many were rewritten.
+ */
+export async function refreshAllReports(): Promise<number> {
+  const reports = await getReports();
+  // Sequential for the same reason as `refreshReportsFor` below: each refresh
+  // read-modify-writes the same reports document.
+  for (const report of reports) {
+    await refreshReport({ start: report.periodStart, end: report.periodEnd });
+  }
+  return reports.length;
 }
 
 /**

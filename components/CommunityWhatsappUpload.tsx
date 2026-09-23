@@ -7,6 +7,7 @@ import type { SourceInfo } from '@/components/ImportPanel';
 import { DateRangeFields } from '@/components/DateRangeFields';
 import { formatDateRange } from '@/lib/period';
 import { formatRelativeTime } from '@/lib/metrics';
+import { singularize } from '@/lib/groups';
 
 /**
  * One upload area for a whole community: drop in every group's chat export at
@@ -79,6 +80,7 @@ export function CommunityWhatsappUpload({
   const [elapsedSec, setElapsedSec] = useState(0);
 
   const working = busy || isPending;
+  const groupNounSingular = singularize(groupNoun);
 
   // A "still working" signal that grows over time, rather than a static
   // "loading…" that reads the same at 1s and 90s. A batch of five full-history
@@ -195,7 +197,7 @@ export function CommunityWhatsappUpload({
             <div>
               <div className="impRow__title">All {groupNoun.toLowerCase()} at once</div>
               <div className="impRow__sub">
-                {info.fileDescription} — one file per {groupNoun.toLowerCase().replace(/s$/, '')}.
+                {info.fileDescription} — one file per {groupNounSingular.toLowerCase()}.
                 Each file&rsquo;s group is detected from the chat&rsquo;s own name, so nothing needs
                 tagging.
               </div>
@@ -388,7 +390,7 @@ export function CommunityWhatsappUpload({
               <li key={step}>{step}</li>
             ))}
             <li>
-              Repeat for each {groupNoun.toLowerCase().replace(/s$/, '')}, then select all of the
+              Repeat for each {groupNounSingular.toLowerCase()}, then select all of the
               saved files together here. Keep WhatsApp&rsquo;s own filenames where you can — they
               carry the group name, which is what identifies each file.
             </li>

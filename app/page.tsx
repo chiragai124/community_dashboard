@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/PageHeader';
 import { RegenerateButton } from '@/components/RegenerateButton';
 import { ReportPeriodPicker } from '@/components/ReportPeriodPicker';
+import { InstagramEntryForm } from '@/components/InstagramEntryForm';
 import { LandingWadlDashboard } from '@/components/LandingWadlDashboard';
 import {
   InstagramSection,
@@ -119,6 +120,14 @@ export default async function OverviewPage({
           createdOn={data.instagramChannel.createdOn}
           periodEnd={data.period.end}
           previousLabel={previousLabel}
+        />
+
+        {/* The channel is one thing, not one per community, so its entry form
+            lives here beside its figures rather than on a community tab. */}
+        <InstagramEntryForm
+          currentMembers={instagramMembers(data)}
+          createdOn={data.instagramChannel.createdOn}
+          period={data.activePeriod}
         />
 
         <h2 className="sectionTitle">Accommodation poll &amp; follow-up funnel</h2>
