@@ -1,85 +1,149 @@
 import { PageHeader } from '@/components/PageHeader';
-import { StatCard } from '@/components/StatCard';
-import { MemberComparison } from '@/components/MemberComparison';
 import { RegenerateButton } from '@/components/RegenerateButton';
+import { ReportPeriodPicker } from '@/components/ReportPeriodPicker';
+import { LandingWadlDashboard } from '@/components/LandingWadlDashboard';
+import {
+  InstagramSection,
+  LeadsFunnel,
+  MemberCountTable,
+} from '@/components/ReportSections';
 import { COMMUNITIES } from '@/lib/groups';
 import {
-  allCommunitiesMembers,
+  communityLeads,
   communityMembers,
   headlineTakeaways,
+  instagramMembers,
   loadDashboard,
-  overallPeriodRange,
   perCommunityTotals,
+  previousCommunityLeads,
+  previousCommunityMembers,
+  previousGa4,
+  previousInstagramMembers,
+  previousShortio,
+  reportWindow,
+  shortioReportSeries,
+  GA4_FIGURES,
 } from '@/lib/dashboard';
 import { formatExact } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { groqEnabled } from '@/lib/ai/groq';
 import { getOverviewTakeaways } from '@/lib/ai/store';
+import type { TrendRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The Overview tab: total membership across every community, a message
- * count per community, two bar charts, a member-vs-previous-report
- * comparison, and a handful of headline takeaways — the front page of the
- * weekly report. Matches the reference report's Overview page exactly,
- * minus the Accommodation Poll / Follow-up Funnel section.
+ * The Overview tab: the weekly report's front page, in the order the report
+ * itself reads — member count, Instagram broadcast channel, accommodation
+ * poll and follow-up funnel, messages by community, landing page & WADL, and
+ * the headline takeaways.
+ *
+ * Every figure on this page answers for one date range, shown and chosen at
+ * the top. Past reports are browsable from the same control; opening one
+ * shows what that report said, not today's numbers under yesterday's dates.
  */
-export default async function OverviewPage() {
-  const data = await loadDashboard();
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
+  const { period: periodParam } = await searchParams;
+  const data = await loadDashboard(periodParam);
+
   const byCommunity = perCommunityTotals(data);
-  const members = allCommunitiesMembers(data);
-  const range = overallPeriodRange(data);
   const stored = await getOverviewTakeaways();
   const takeaways = stored?.takeaways ?? headlineTakeaways(data);
   const aiAvailable = groqEnabled();
 
-  const communityMemberTotals = COMMUNITIES.map((c) => ({
-    community: c,
-    total: communityMembers(data, c.slug)?.total ?? 0,
+  const previousLabel = data.previous
+    ? formatDateRange(data.previous.periodStart, data.previous.periodEnd)
+    : null;
+
+  const memberRows = COMMUNITIES.map((community) => ({
+    community,
+    current: communityMembers(data, community.slug)?.total ?? null,
+    previous: previousCommunityMembers(data, community.slug),
   }));
-  const maxMembers = Math.max(...communityMemberTotals.map((c) => c.total), 1);
+
+  const leadRows = COMMUNITIES.map((community) => ({
+    community,
+    current: communityLeads(data, community.slug),
+    previous: previousCommunityLeads(data, community.slug),
+  }));
+
   const maxMessages = Math.max(...byCommunity.map((c) => c.totals.messageCount), 1);
   const busiestCommunity = [...byCommunity].sort(
     (a, b) => b.totals.messageCount - a.totals.messageCount,
   )[0]?.community;
+
+  // One row per filed report, oldest first — the x-axis of the landing-page
+  // trend lines. Built once here and passed down, so the chart component
+  // stays a pure renderer.
+  const window = reportWindow(data, 12);
+  const ga4Rows: TrendRow[] = window.map((report) => {
+    const row: TrendRow = { week: report.periodEnd };
+    for (const figure of GA4_FIGURES) row[figure.key] = figure.pick(report.snapshot.ga4);
+    return row;
+  });
+
+  const periodOptions = [...data.reports].reverse().map((report) => ({
+    id: report.id,
+    start: report.periodStart,
+    end: report.periodEnd,
+    filedLabel: describeReport(report.snapshot.totalMembers, report.snapshot.communities.length),
+  }));
 
   return (
     <>
       <PageHeader
         eyebrow="Overview · All communities"
         title="Weekly Community Report"
-        periodLabel={range ? formatDateRange(range.start, range.end) : null}
+        periodLabel={formatDateRange(data.period.start, data.period.end)}
       />
 
       <div className="content">
-        <div className="grid grid--stats">
-          <StatCard label="Total members, all 3 communities" value={formatExact(members.current)} />
-          {communityMemberTotals.map(({ community, total }) => (
-            <StatCard key={community.slug} label={`Members in ${community.label}`} value={formatExact(total)} />
-          ))}
-        </div>
+        <ReportPeriodPicker
+          period={data.period}
+          activePeriod={data.activePeriod}
+          isActivePeriod={data.isActivePeriod}
+          options={periodOptions}
+        />
 
-        <h2 className="sectionTitle">Messages This Week, by Community</h2>
+        <h2 className="sectionTitle">Member count</h2>
+        <MemberCountTable rows={memberRows} previousLabel={previousLabel} />
+
+        <h2 className="sectionTitle">Instagram broadcast channel</h2>
+        <InstagramSection
+          members={instagramMembers(data)}
+          previousMembers={previousInstagramMembers(data)}
+          createdOn={data.instagramChannel.createdOn}
+          periodEnd={data.period.end}
+          previousLabel={previousLabel}
+        />
+
+        <h2 className="sectionTitle">Accommodation poll &amp; follow-up funnel</h2>
+        <LeadsFunnel rows={leadRows} previousLabel={previousLabel} />
+
+        <h2 className="sectionTitle">Messages this period, by community</h2>
         <section className="card">
           <div className="card__body">
             <div className="bars">
-              {byCommunity.map(({ community, totals: t }) => {
+              {byCommunity.map(({ community, totals }) => {
                 const config = COMMUNITIES.find((c) => c.slug === community);
                 return (
                   <div className="bar-row" key={community}>
                     <div className="bar-row__top">
                       <span className="bar-row__label">{config?.label ?? community}</span>
-                      <span className="bar-row__value">{formatExact(t.messageCount)}</span>
+                      <span className="bar-row__value">{formatExact(totals.messageCount)}</span>
                     </div>
                     <div
                       className="bar-track"
                       role="img"
-                      aria-label={`${config?.label}: ${formatExact(t.messageCount)} messages`}
+                      aria-label={`${config?.label}: ${formatExact(totals.messageCount)} messages`}
                     >
                       <div
                         className={`bar-fill${community === busiestCommunity ? ' bar-fill--lead' : ''}`}
-                        style={{ width: `${Math.max((t.messageCount / maxMessages) * 100, 2)}%` }}
+                        style={{ width: `${Math.max((totals.messageCount / maxMessages) * 100, 2)}%` }}
                       />
                     </div>
                   </div>
@@ -88,56 +152,32 @@ export default async function OverviewPage() {
             </div>
             {byCommunity.every((c) => c.totals.groupsWithEntry === 0) ? (
               <p className="chartNote">
-                No WhatsApp imports yet — upload a group's chat export from its Community tab to
-                see numbers here.
+                No WhatsApp exports filed for this period — upload a community&rsquo;s chat exports
+                from its tab to see numbers here.
               </p>
             ) : null}
           </div>
         </section>
 
-        <h2 className="sectionTitle">Total Membership, by Community</h2>
-        <section className="card">
-          <div className="card__body">
-            <div className="bars">
-              {communityMemberTotals.map(({ community, total }) => (
-                <div className="bar-row" key={community.slug}>
-                  <div className="bar-row__top">
-                    <span className="bar-row__label">{community.label}</span>
-                    <span className="bar-row__value">{formatExact(total)}</span>
-                  </div>
-                  <div
-                    className="bar-track"
-                    role="img"
-                    aria-label={`${community.label}: ${formatExact(total)} members`}
-                  >
-                    <div
-                      className={`bar-fill${total === maxMembers && total > 0 ? ' bar-fill--lead' : ''}`}
-                      style={{ width: `${Math.max((total / maxMembers) * 100, 2)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-            {members.current === 0 ? (
-              <p className="chartNote">
-                No member totals entered yet — add one from each Community tab.
-              </p>
-            ) : null}
-          </div>
-        </section>
-
-        <h2 className="sectionTitle">Members vs. previous report</h2>
-        <MemberComparison
-          currentMembers={members.current}
-          previousMembers={members.anyPrevious ? members.previous : null}
-          previousLabel={null}
+        <LandingWadlDashboard
+          period={data.period}
+          ga4={data.ga4}
+          shortio={data.shortio}
+          previousGa4={previousGa4(data)}
+          previousShortio={previousShortio(data)}
+          ga4Rows={ga4Rows}
+          shortioPoints={shortioReportSeries(data, (s) => s?.totalClicks ?? null, 12)}
+          previousLabel={previousLabel}
         />
 
         <h2 className="sectionTitle">Headline takeaways</h2>
         {takeaways.length > 0 ? (
           <div className="calloutGrid">
             {takeaways.map((t, i) => (
-              <div className={`callout${t.tone === 'good' ? ' callout--good' : ''}`} key={`${t.tag}-${i}`}>
+              <div
+                className={`callout${t.tone === 'good' ? ' callout--good' : ''}`}
+                key={`${t.tag}-${i}`}
+              >
                 <span className="callout__tag">{t.tag}</span>
                 <p className="callout__text" style={{ margin: 0 }}>
                   {t.text}
@@ -146,7 +186,9 @@ export default async function OverviewPage() {
             ))}
           </div>
         ) : (
-          <p className="chartNote">Nothing to report yet — upload a WhatsApp export somewhere first.</p>
+          <p className="chartNote">
+            Nothing to report yet — upload a WhatsApp export somewhere first.
+          </p>
         )}
         {aiAvailable ? (
           <div style={{ marginTop: 12 }}>
@@ -156,14 +198,23 @@ export default async function OverviewPage() {
             />
             {stored ? (
               <p className="aiNote">
-                Showing AI-generated takeaways. Falls back to local heuristics if regeneration fails.
+                Showing AI-generated takeaways. Falls back to local heuristics if regeneration
+                fails.
               </p>
             ) : (
-              <p className="aiNote">Showing local heuristics — generate a richer, narrative version above.</p>
+              <p className="aiNote">
+                Showing local heuristics — generate a richer, narrative version above.
+              </p>
             )}
           </div>
         ) : null}
       </div>
     </>
   );
+}
+
+/** A one-glance summary of a filed report, for the period dropdown. */
+function describeReport(totalMembers: number | null, communityCount: number): string {
+  if (totalMembers === null) return `${communityCount} communities, no member total`;
+  return `${totalMembers.toLocaleString('en-US')} members`;
 }

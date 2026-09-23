@@ -5,21 +5,30 @@ export { extractGa4 } from './ga4';
 export { extractChatTextFromZip, extractWhatsapp } from './whatsapp';
 export {
   deleteImport,
-  findGa4Import,
   findImport,
-  ga4Week,
+  ga4Imports,
   getImports,
   groupPeriods,
   importId,
   importIdForGlobal,
   importIdForPeriod,
+  importsOfSource,
   latestGroupPeriod,
   previousGroupPeriod,
   resetImports,
   saveImport,
   saveImports,
-  shortioWeek,
+  shortioImports,
 } from './store';
+export {
+  coveredRange,
+  periodLength,
+  resolveGa4,
+  resolveShortio,
+  type FigureOrigin,
+  type ResolvedImport,
+} from './resolve';
+export { groupPeriodFor } from './period-match';
 
 /**
  * The two file-import sources, and how they are described in the UI.

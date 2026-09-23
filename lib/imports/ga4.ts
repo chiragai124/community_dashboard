@@ -1,6 +1,7 @@
-import type { Ga4Figures } from '../types';
+import type { DailyRow, Ga4Figures } from '../types';
 import { parseCsv } from '../csv';
 import { normalizeKey, toNumber } from '../xlsx';
+import { readGa4Daily } from './daily';
 import { ImportError } from './shortio';
 
 /**
@@ -47,6 +48,11 @@ export interface Ga4Extract {
   notes: string[];
   /** The report window GA4 stamped into the comments, when it declares one. */
   dateRange: { start: string; end: string } | null;
+  /**
+   * Per-day rows, when the snapshot includes a section broken down by date.
+   * Empty when it doesn't — see lib/imports/daily.ts.
+   */
+  daily: DailyRow[];
 }
 
 /** Split the export on its `#` comment blocks into one table per report. */
@@ -204,6 +210,14 @@ export function extractGa4(text: string, filename: string): Ga4Extract {
     );
   }
 
+  const daily = readGa4Daily(sections);
+  if (daily.length > 0) {
+    notes.push(
+      `${daily.length} day(s) of date-by-date rows found, so this export can be re-sliced to a ` +
+        'shorter period later without a fresh upload.',
+    );
+  }
+
   return {
     figures: {
       // Null, never 0, for a figure the export didn't contain — a missing metric
@@ -214,5 +228,6 @@ export function extractGa4(text: string, filename: string): Ga4Extract {
     },
     notes,
     dateRange: findDateRange(sections),
+    daily,
   };
 }

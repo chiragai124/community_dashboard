@@ -1,5 +1,6 @@
-import type { LinkClicks, ShortioFigures } from '../types';
+import type { DailyRow, LinkClicks, ShortioFigures } from '../types';
 import { normalizeKey, readXlsx, toNumber, type XlsxSheet } from '../xlsx';
+import { readShortioDaily } from './daily';
 
 /**
  * Pulling two things out of a Short.io statistics workbook: the total click
@@ -37,6 +38,11 @@ const PATH_HEADERS = [
 export interface ShortioExtract {
   figures: ShortioFigures;
   notes: string[];
+  /**
+   * Per-day clicks, when the workbook carries a dated sheet. Empty when it
+   * doesn't — see lib/imports/daily.ts.
+   */
+  daily: DailyRow[];
 }
 
 /** The first sheet whose normalized name matches, or contains, one of `wanted`. */
@@ -199,5 +205,13 @@ export function extractShortio(buffer: Buffer, filename: string): ShortioExtract
     );
   }
 
-  return { figures: { totalClicks, links }, notes };
+  const daily = readShortioDaily(sheets);
+  if (daily.length > 0) {
+    notes.push(
+      `${daily.length} day(s) of per-day clicks found, so this workbook can be re-sliced to a ` +
+        'shorter period later without a fresh upload.',
+    );
+  }
+
+  return { figures: { totalClicks, links }, notes, daily };
 }

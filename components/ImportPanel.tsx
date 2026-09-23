@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CommunitySlug, ImportSource, ImportedFile } from '@/lib/types';
-import { formatWeekLabel, parseISODate, weekStartOf } from '@/lib/weeks';
+import { formatDateRange } from '@/lib/period';
 import { formatRelativeTime } from '@/lib/metrics';
 import { DateRangeFields } from '@/components/DateRangeFields';
 
@@ -32,7 +32,7 @@ export interface SourceInfo {
 export function ImportPanel({
   community,
   scopeLabel,
-  defaultWeek,
+  period,
   sources,
   existing,
 }: {
@@ -40,8 +40,8 @@ export function ImportPanel({
   community?: CommunitySlug;
   /** What this upload is for, in plain words: a community's label, or e.g. "the landing page". */
   scopeLabel: string;
-  /** Seeds the initial start/end date fields — today's displayed week. */
-  defaultWeek: string;
+  /** The period being reported on — seeds the start/end date fields. */
+  period: { start: string; end: string };
   sources: SourceInfo[];
   /** Everything already stored for this scope, any week. */
   existing: ImportedFile[];
@@ -54,7 +54,7 @@ export function ImportPanel({
         </span>
         <span className="qual__summaryLabel">Import data</span>
         <span className="qual__summaryHint">
-          {sources.map((s) => s.label).join(' · ')} — upload this week’s export for{' '}
+          {sources.map((s) => s.label).join(' · ')} — upload this period’s export for{' '}
           {scopeLabel}
         </span>
       </summary>
@@ -64,7 +64,7 @@ export function ImportPanel({
             key={source.source}
             community={community}
             info={source}
-            defaultWeek={defaultWeek}
+            period={period}
             existing={existing.filter((f) => f.source === source.source)}
           />
         ))}
@@ -76,30 +76,29 @@ export function ImportPanel({
 function SourceRow({
   community,
   info,
-  defaultWeek,
+  period,
   existing,
 }: {
   community?: CommunitySlug;
   info: SourceInfo;
-  defaultWeek: string;
+  period: { start: string; end: string };
   existing: ImportedFile[];
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
-  // Same two-date picker WhatsApp import uses, for consistency — Short.io/GA4
-  // still file under one Monday-anchored week internally (derived from the
-  // start date below), since each export IS one week's snapshot; the end
-  // date just keeps the control visually and behaviourally identical across
-  // all three import sources.
-  const [periodStart, setPeriodStart] = useState(defaultWeek);
-  const [periodEnd, setPeriodEnd] = useState(defaultWeek);
+  // The same date range every other section reports on, seeded from the
+  // active period. Short.io and GA4 are now filed under this range like
+  // WhatsApp is, rather than snapped to a Monday-anchored week of their own —
+  // one report, one set of dates.
+  const [periodStart, setPeriodStart] = useState(period.start);
+  const [periodEnd, setPeriodEnd] = useState(period.end);
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [okMessage, setOkMessage] = useState<string | null>(null);
 
-  const week = weekStartOf(parseISODate(periodStart || defaultWeek));
-  const stored = existing.find((f) => f.weekStart === week) ?? null;
+  const stored =
+    existing.find((f) => f.periodStart === periodStart && f.periodEnd === periodEnd) ?? null;
   const working = busy || isPending;
 
   async function upload(file: File) {
@@ -116,7 +115,8 @@ function SourceRow({
       body.set('source', info.source);
       // Omitted for a global source (e.g. GA4) — no community to send.
       if (community) body.set('community', community);
-      body.set('weekStart', week);
+      body.set('periodStart', periodStart);
+      body.set('periodEnd', periodEnd);
 
       const res = await fetch('/api/imports', { method: 'POST', body });
       const payload = (await res.json().catch(() => ({}))) as {
@@ -176,8 +176,10 @@ function SourceRow({
         disabled={working}
       />
       <p className="chartNote" style={{ marginTop: 0 }}>
-        Filed under the week of {formatWeekLabel(week)} (the Monday–Sunday week containing the
-        start date above).
+        Filed under {formatDateRange(periodStart, periodEnd)}, and makes that the reporting period
+        for the whole dashboard. If no export is uploaded for a later period, this one is reused —
+        re-sliced to the right days when it has a day-by-day breakdown, or carried forward and
+        labelled as such when it doesn&rsquo;t.
       </p>
 
       <label className="field">
@@ -242,7 +244,7 @@ function SourceRow({
         </div>
       ) : (
         <p className="impRow__status muted">
-          Nothing imported for this week yet.
+          Nothing imported for this period yet.
         </p>
       )}
 

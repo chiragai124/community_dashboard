@@ -56,6 +56,16 @@ const COMMUNITY_3_GROUPS: GroupConfig[] = [
   { slug: 'germany-3', community: 'community-3', name: 'Germany', label: 'Germany', flag: '🇩🇪' },
 ];
 
+/* ------------------------------------------- Community #4 — same 5 groups -- */
+
+const COMMUNITY_4_GROUPS: GroupConfig[] = [
+  { slug: 'uk-4', community: 'community-4', name: 'United Kingdom', label: 'UK', flag: '🇬🇧' },
+  { slug: 'usa-4', community: 'community-4', name: 'United States', label: 'USA', flag: '🇺🇸' },
+  { slug: 'australia-4', community: 'community-4', name: 'Australia', label: 'Australia', flag: '🇦🇺' },
+  { slug: 'canada-4', community: 'community-4', name: 'Canada', label: 'Canada', flag: '🇨🇦' },
+  { slug: 'germany-4', community: 'community-4', name: 'Germany', label: 'Germany', flag: '🇩🇪' },
+];
+
 /* ----------------------------------------------------------- the registry -- */
 
 export const COMMUNITIES: CommunityConfig[] = [
@@ -91,6 +101,15 @@ export const COMMUNITIES: CommunityConfig[] = [
     groupNoun: 'Groups',
     imports: [],
     groups: COMMUNITY_3_GROUPS,
+  },
+  {
+    slug: 'community-4',
+    name: 'Community #4',
+    label: 'Community #4',
+    description: 'UK, USA, Australia, Canada and Germany',
+    groupNoun: 'Groups',
+    imports: [],
+    groups: COMMUNITY_4_GROUPS,
   },
 ];
 

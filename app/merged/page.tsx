@@ -1,93 +1,115 @@
 import { PageHeader } from '@/components/PageHeader';
-import { getCommunity, importsFor } from '@/lib/groups';
-import { LandingPageTraffic, CommunityShortioClicks } from '@/components/ImportedFigures';
 import { ImportPanel } from '@/components/ImportPanel';
+import { LandingWadlDashboard } from '@/components/LandingWadlDashboard';
+import { ReportPeriodPicker } from '@/components/ReportPeriodPicker';
+import { getCommunity, importsFor, LANDING_PAGE_IMPORTS } from '@/lib/groups';
 import { SOURCE_META } from '@/lib/imports';
 import {
   GA4_FIGURES,
-  communityShortio,
-  ga4Series,
-  landingPageGa4,
   loadDashboard,
-  shortioSeries,
+  previousGa4,
+  previousShortio,
+  reportWindow,
+  shortioReportSeries,
 } from '@/lib/dashboard';
+import { formatDateRange } from '@/lib/period';
+import type { TrendRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Landing page & WADL: GA4 landing-page traffic and Community #2's Short.io
- * link data. Neither is WhatsApp community data — GA4 describes the website,
- * Short.io is Community #2's own tracked links — so nothing here is pooled
- * with the community reports. Untouched integrations; only the surrounding
- * page (member totals, community grid) moved to the Overview tab.
+ * Landing page & WADL: the full-width version of the dashboard section that
+ * also appears on the Overview, plus the two uploads that feed it.
+ *
+ * Neither source is WhatsApp community data — GA4 describes the website and
+ * Short.io is Community #2's own tracked links — so nothing here is ever
+ * pooled with the community reports. It shares the reporting period with
+ * them, and nothing else.
  */
 export default async function LandingPageAndWadl({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ period?: string }>;
 }) {
-  const { week } = await searchParams;
-  const data = await loadDashboard(week);
-
-  const ga4Figures = landingPageGa4(data);
-  const ga4SeriesByKey = Object.fromEntries(
-    GA4_FIGURES.map((figure) => [figure.key, ga4Series(data, figure.pick)]),
-  );
+  const { period: periodParam } = await searchParams;
+  const data = await loadDashboard(periodParam);
 
   const community2 = getCommunity('community-2')!;
-  const shortioFigures = communityShortio(data, 'community-2');
-  const clicksSeries = shortioSeries(data, 'community-2', (f) => f?.totalClicks ?? null);
-  const community2Sources = importsFor('community-2').map((source) => SOURCE_META[source]);
-  const community2Imports = data.imports.filter(
-    (f) => f.community === 'community-2' && f.source === 'shortio',
-  );
+  const ga4Sources = LANDING_PAGE_IMPORTS.map((source) => SOURCE_META[source]);
+  const shortioSources = importsFor('community-2').map((source) => SOURCE_META[source]);
+
+  const window = reportWindow(data, 12);
+  const ga4Rows: TrendRow[] = window.map((report) => {
+    const row: TrendRow = { week: report.periodEnd };
+    for (const figure of GA4_FIGURES) row[figure.key] = figure.pick(report.snapshot.ga4);
+    return row;
+  });
+
+  const periodOptions = [...data.reports].reverse().map((report) => ({
+    id: report.id,
+    start: report.periodStart,
+    end: report.periodEnd,
+    filedLabel: describeSources(report.snapshot.ga4 !== null, report.snapshot.shortio !== null),
+  }));
+
+  const previousLabel = data.previous
+    ? formatDateRange(data.previous.periodStart, data.previous.periodEnd)
+    : null;
 
   return (
     <>
-      <PageHeader eyebrow="Landing page & WADL" title="Landing page & WADL" weekStart={data.displayWeek} />
+      <PageHeader
+        eyebrow="Landing page & WADL"
+        title="Landing page & WADL"
+        periodLabel={formatDateRange(data.period.start, data.period.end)}
+      />
 
       <div className="content">
-        <h2 className="sectionTitle">Landing page traffic · GA4</h2>
-        <p className="chartNote" style={{ marginTop: -6 }}>
-          The website's traffic, not any community's — GA4 has nothing to do with WhatsApp
-          membership.
-        </p>
-        <LandingPageTraffic
-          figures={ga4Figures}
-          series={ga4SeriesByKey}
-          emptyHint="Nothing imported for this week yet. Upload the GA4 export below."
+        <ReportPeriodPicker
+          period={data.period}
+          activePeriod={data.activePeriod}
+          isActivePeriod={data.isActivePeriod}
+          options={periodOptions}
         />
-        <div style={{ marginTop: 14 }}>
-          <ImportPanel
-            scopeLabel="the landing page"
-            defaultWeek={data.displayWeek}
-            sources={[SOURCE_META.ga4]}
-            existing={data.imports.filter((f) => f.source === 'ga4')}
-          />
-        </div>
 
-        <h2 className="sectionTitle">Community #2's link clicks · Short.io</h2>
-        <p className="chartNote" style={{ marginTop: -6 }}>
-          Community #2's own tracked links specifically — not shared with, or summed against, any
-          other community.
-        </p>
-        <CommunityShortioClicks
-          figures={shortioFigures}
-          clicksSeries={clicksSeries}
-          emptyHint="Nothing imported for this week yet. Upload Community #2's Short.io export below."
+        <LandingWadlDashboard
+          period={data.period}
+          ga4={data.ga4}
+          shortio={data.shortio}
+          previousGa4={previousGa4(data)}
+          previousShortio={previousShortio(data)}
+          ga4Rows={ga4Rows}
+          shortioPoints={shortioReportSeries(data, (s) => s?.totalClicks ?? null, 12)}
+          previousLabel={previousLabel}
         />
-        {community2Sources.length > 0 ? (
-          <div style={{ marginTop: 14 }}>
-            <ImportPanel
-              community="community-2"
-              scopeLabel={community2.label}
-              defaultWeek={data.displayWeek}
-              sources={community2Sources}
-              existing={community2Imports}
-            />
-          </div>
+
+        <h2 className="sectionTitle">Imports</h2>
+        <ImportPanel
+          scopeLabel="the landing page"
+          period={data.activePeriod}
+          sources={ga4Sources}
+          existing={data.imports.filter((f) => f.source === 'ga4')}
+        />
+        {shortioSources.length > 0 ? (
+          <ImportPanel
+            community={community2.slug}
+            scopeLabel={`${community2.label}'s tracked links`}
+            period={data.activePeriod}
+            sources={shortioSources}
+            existing={data.imports.filter(
+              (f) => f.community === community2.slug && f.source === 'shortio',
+            )}
+          />
         ) : null}
       </div>
     </>
   );
+}
+
+/** What a past report has on file for this tab, for the period dropdown. */
+function describeSources(hasGa4: boolean, hasShortio: boolean): string {
+  if (hasGa4 && hasShortio) return 'GA4 + Short.io';
+  if (hasGa4) return 'GA4 only';
+  if (hasShortio) return 'Short.io only';
+  return 'nothing filed';
 }
