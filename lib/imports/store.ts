@@ -29,12 +29,11 @@ import { readJsonObject, vercelBlobEnabled, writeJsonObject } from '../vercel-bl
  *   - A local JSON file, `data/imports.json` — the zero-config default for
  *     `npm run dev`.
  *
- * Short.io/GA4 stay on the Monday-anchored week system (untouched — see
- * lib/weeks.ts); re-uploading the same export for the same week REPLACES
- * that week's figures. WhatsApp is keyed by its manually-entered
- * periodStart/periodEnd instead — re-filing the same range REPLACES it the
- * same way. The natural key differs by source — see the `ImportedFile` doc
- * comment in ../types.ts.
+ * Every source is keyed by the date range it covers, so re-uploading the same
+ * export for the same range REPLACES its figures rather than adding a second
+ * record. What differs between sources is only the scope alongside the range
+ * — a group for WhatsApp, a community for Short.io, nothing for GA4. See the
+ * `ImportedFile` doc comment in ../types.ts.
  */
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -363,25 +362,6 @@ export async function resetImports(): Promise<{ count: number }> {
 
 /* ---------------------------------------------------------------- selectors */
 
-/** The stored file for one source, community and exact date range, if any. */
-export function findImport(
-  files: ImportedFile[],
-  source: ImportSource,
-  community: CommunitySlug,
-  periodStart: string,
-  periodEnd: string,
-): ImportedFile | null {
-  return (
-    files.find(
-      (f) =>
-        f.source === source &&
-        f.community === community &&
-        f.periodStart === periodStart &&
-        f.periodEnd === periodEnd,
-    ) ?? null
-  );
-}
-
 /** Every filed period for one group, oldest first. */
 export function groupPeriods(files: ImportedFile[], group: GroupSlug): ImportedFile[] {
   return files
@@ -427,20 +407,3 @@ export function importsOfSource(files: ImportedFile[], source: ImportSource): Im
     .sort((a, b) => (a.periodEnd! < b.periodEnd! ? -1 : 1));
 }
 
-/**
- * Community #2's Short.io uploads, oldest first. Still
- * community-parameterized (rather than hardcoded to community-2) so a second
- * community could pick up Short.io later without a signature change, but only
- * Community #2 declares the capability today — see lib/groups.ts.
- */
-export function shortioImports(
-  files: ImportedFile[],
-  community: CommunitySlug,
-): ImportedFile[] {
-  return importsOfSource(files, 'shortio').filter((f) => f.community === community);
-}
-
-/** Every landing-page GA4 upload, oldest first. */
-export function ga4Imports(files: ImportedFile[]): ImportedFile[] {
-  return importsOfSource(files, 'ga4');
-}

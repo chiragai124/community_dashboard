@@ -125,6 +125,7 @@ export default async function OverviewPage({
         {/* The channel is one thing, not one per community, so its entry form
             lives here beside its figures rather than on a community tab. */}
         <InstagramEntryForm
+          key={`ig-${data.period.start}-${data.period.end}`}
           currentMembers={instagramMembers(data)}
           createdOn={data.instagramChannel.createdOn}
           period={data.activePeriod}

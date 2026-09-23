@@ -154,6 +154,7 @@ export default async function GroupPage({
 
         <h2 className="sectionTitle">Import WhatsApp chat</h2>
         <WhatsappImportPanel
+          key={`wa-${data.activePeriod.start}-${data.activePeriod.end}`}
           group={group.slug}
           groupLabel={group.label}
           community={community.slug}

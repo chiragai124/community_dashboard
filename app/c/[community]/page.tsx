@@ -110,7 +110,11 @@ export default async function CommunityPage({
           options={periodOptions}
         />
 
+        {/* Keyed by period: these inputs seed their state from props once, so
+            without a remount they would keep showing the figures and dates of
+            whichever period was open before. */}
         <CommunityWhatsappUpload
+          key={`wa-${data.activePeriod.start}-${data.activePeriod.end}`}
           community={community.slug}
           communityLabel={community.label}
           groupNoun={community.groupNoun}
@@ -121,6 +125,7 @@ export default async function CommunityPage({
 
         {fileSources.length > 0 ? (
           <ImportPanel
+            key={`files-${data.activePeriod.start}-${data.activePeriod.end}`}
             community={community.slug}
             scopeLabel={community.label}
             period={data.activePeriod}
@@ -147,6 +152,7 @@ export default async function CommunityPage({
 
         <h2 className="sectionTitle">Total members</h2>
         <NumberEntryForm
+          key={`members-${data.period.start}-${data.period.end}`}
           subtitle="Entered by hand — kept as a dated history, so every report keeps its own figure."
           valueLabel="Total members"
           endpoint="/api/community-members"
@@ -166,6 +172,7 @@ export default async function CommunityPage({
 
         <h2 className="sectionTitle">Leads added to CRM</h2>
         <NumberEntryForm
+          key={`leads-${data.period.start}-${data.period.end}`}
           subtitle="How many leads this community added to the CRM during the reporting period."
           valueLabel="Leads added"
           endpoint="/api/community-leads"
