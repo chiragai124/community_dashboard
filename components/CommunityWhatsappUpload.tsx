@@ -82,6 +82,24 @@ export function CommunityWhatsappUpload({
   const working = busy || isPending;
   const groupNounSingular = singularize(groupNoun);
 
+  /*
+   * Follow the reporting period when it changes elsewhere — without
+   * remounting.
+   *
+   * These date fields seed from the active period, and a successful upload
+   * *sets* that period, so keying this panel by it (the obvious way to keep
+   * the fields fresh) destroyed the component the instant an upload
+   * succeeded: the per-file results table, the warnings and the "filed as…"
+   * confirmation all vanished before anyone could read them, and the panel
+   * snapped shut. Since the dates here are what set the period in the first
+   * place, this is a no-op right after an upload and the results survive; it
+   * only does anything when the period is changed from the picker.
+   */
+  useEffect(() => {
+    setPeriodStart(period.start);
+    setPeriodEnd(period.end);
+  }, [period.start, period.end]);
+
   // A "still working" signal that grows over time, rather than a static
   // "loading…" that reads the same at 1s and 90s. A batch of five full-history
   // exports plus their AI summaries genuinely takes a while, and a stalled

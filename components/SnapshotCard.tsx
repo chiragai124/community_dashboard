@@ -22,14 +22,29 @@ function healthClass(tag: string, activityLevel: string | null): 'hot' | 'quiet'
  * CommunityTopicsPanel) rather than repeated on every card. Links through to
  * the group's own page for the full sentiment breakdown and the WhatsApp
  * upload control.
+ *
+ * `periodParam` is passed through to that link when a past report is being
+ * browsed. Without it, clicking into a group from a past report silently
+ * lands on the *current* period's figures under the same-looking page —
+ * exactly the "which dates am I looking at" confusion the single reporting
+ * period exists to remove.
  */
-export function SnapshotCard({ metrics }: { metrics: GroupPeriodMetrics }) {
+export function SnapshotCard({
+  metrics,
+  periodParam,
+}: {
+  metrics: GroupPeriodMetrics;
+  /** `start:end` of the period being viewed, when it isn't the active one. */
+  periodParam?: string | null;
+}) {
   const group = getGroup(metrics.group);
   if (!group) return null;
 
   const tag = metrics.aiSummary?.statusTag ?? metrics.activityLevel ?? 'No data';
   const health = healthClass(tag, metrics.activityLevel);
-  const href = `/c/${group.community}/group/${group.slug}`;
+  const href =
+    `/c/${group.community}/group/${group.slug}` +
+    (periodParam ? `?period=${encodeURIComponent(periodParam)}` : '');
 
   const voicesLine =
     metrics.topVoices.length === 0

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CommunitySlug, ImportSource, ImportedFile } from '@/lib/types';
 import { formatDateRange } from '@/lib/period';
@@ -96,6 +96,15 @@ function SourceRow({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [okMessage, setOkMessage] = useState<string | null>(null);
+
+  // Track the reporting period without remounting — see the equivalent note
+  // in CommunityWhatsappUpload: a successful upload sets the period, so
+  // keying this panel by it would wipe the result message that upload just
+  // produced.
+  useEffect(() => {
+    setPeriodStart(period.start);
+    setPeriodEnd(period.end);
+  }, [period.start, period.end]);
 
   const stored =
     existing.find((f) => f.periodStart === periodStart && f.periodEnd === periodEnd) ?? null;

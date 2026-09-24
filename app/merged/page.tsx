@@ -86,7 +86,6 @@ export default async function LandingPageAndWadl({
 
         <h2 className="sectionTitle">Imports</h2>
         <ImportPanel
-          key={`ga4-${data.activePeriod.start}-${data.activePeriod.end}`}
           scopeLabel="the landing page"
           period={data.activePeriod}
           sources={ga4Sources}
@@ -94,7 +93,6 @@ export default async function LandingPageAndWadl({
         />
         {shortioSources.length > 0 ? (
           <ImportPanel
-            key={`shortio-${data.activePeriod.start}-${data.activePeriod.end}`}
             community={community2.slug}
             scopeLabel={`${community2.label}'s tracked links`}
             period={data.activePeriod}

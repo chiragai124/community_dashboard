@@ -57,6 +57,14 @@ export function WhatsappImportPanel({
   const working = busy || isPending;
   const [elapsedSec, setElapsedSec] = useState(0);
 
+  // Track the reporting period without remounting — same reason as
+  // CommunityWhatsappUpload: an upload here sets the period, and being keyed
+  // by it would wipe the result this upload just produced.
+  useEffect(() => {
+    setPeriodStart(period.start);
+    setPeriodEnd(period.end);
+  }, [period.start, period.end]);
+
   // A visible "still working" signal that grows over time, rather than a
   // static "loading…" that reads the same at 1s and 45s — a slow upload
   // (a big export, or a slow Groq call) previously looked identical to a

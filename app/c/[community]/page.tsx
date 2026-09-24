@@ -110,11 +110,11 @@ export default async function CommunityPage({
           options={periodOptions}
         />
 
-        {/* Keyed by period: these inputs seed their state from props once, so
-            without a remount they would keep showing the figures and dates of
-            whichever period was open before. */}
+        {/* The upload panels track the period themselves (they set it), so
+            they are deliberately not keyed by it — see CommunityWhatsappUpload.
+            The entry forms below are keyed, since they hold no result worth
+            preserving and must re-seed from the period being viewed. */}
         <CommunityWhatsappUpload
-          key={`wa-${data.activePeriod.start}-${data.activePeriod.end}`}
           community={community.slug}
           communityLabel={community.label}
           groupNoun={community.groupNoun}
@@ -125,7 +125,6 @@ export default async function CommunityPage({
 
         {fileSources.length > 0 ? (
           <ImportPanel
-            key={`files-${data.activePeriod.start}-${data.activePeriod.end}`}
             community={community.slug}
             scopeLabel={community.label}
             period={data.activePeriod}
@@ -241,7 +240,11 @@ export default async function CommunityPage({
         <h2 className="sectionTitle">{groupNounSingular} snapshots</h2>
         <div className="grid grid--snapshots">
           {perGroup.map((metrics) => (
-            <SnapshotCard key={metrics.group} metrics={metrics} />
+            <SnapshotCard
+              key={metrics.group}
+              metrics={metrics}
+              periodParam={data.isActivePeriod ? null : `${data.period.start}:${data.period.end}`}
+            />
           ))}
         </div>
 
