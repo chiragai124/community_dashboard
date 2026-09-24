@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { PageHeader } from '@/components/PageHeader';
 import { StatCard, ActivityBadge } from '@/components/StatCard';
 import { WhatsappImportPanel } from '@/components/WhatsappImportPanel';
+import { ReportPeriodPicker } from '@/components/ReportPeriodPicker';
 import { splitNotes } from '@/lib/notes';
 import { Sparkline } from '@/components/charts';
 import { TrendingTopic } from '@/components/TrendingTopic';
@@ -75,6 +76,27 @@ export default async function GroupPage({
       />
 
       <div className="content">
+        {/* The same control every other page carries. Without it this page
+            was the one place you could be looking at a past report with no
+            way to tell, and no way back. */}
+        <ReportPeriodPicker
+          period={data.period}
+          activePeriod={data.activePeriod}
+          isActivePeriod={data.isActivePeriod}
+          options={[...data.reports].reverse().map((report) => {
+            const line = report.snapshot.groups.find((g) => g.group === group.slug);
+            return {
+              id: report.id,
+              start: report.periodStart,
+              end: report.periodEnd,
+              filedLabel:
+                line && line.messageCount !== null
+                  ? `${line.messageCount.toLocaleString('en-US')} messages`
+                  : 'nothing filed',
+            };
+          })}
+        />
+
         {!metrics.hasWhatsapp ? (
           <div className="prefillNote" style={{ marginBottom: 18 }}>
             No WhatsApp report filed for {group.label} yet. Messages, topics and sentiment below
@@ -154,7 +176,6 @@ export default async function GroupPage({
 
         <h2 className="sectionTitle">Import WhatsApp chat</h2>
         <WhatsappImportPanel
-          key={`wa-${data.activePeriod.start}-${data.activePeriod.end}`}
           group={group.slug}
           groupLabel={group.label}
           community={community.slug}

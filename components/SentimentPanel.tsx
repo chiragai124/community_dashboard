@@ -124,8 +124,14 @@ export function SentimentPanel({
                   ) : null}
                 </div>
                 <ul className="sentQuotes__list">
-                  {share.examples.map((quote) => (
-                    <li className={`sentQuote sentQuote--${share.key}`} key={quote}>
+                  {/* Keyed by position, not by the quote: two people really do
+                      send the same short message ("great, booked my room
+                      today"), and keying by text made React drop one of them
+                      as a duplicate. The list is a fixed, ordered top-three
+                      that is never reordered in place, so the index is a
+                      stable identity here. */}
+                  {share.examples.map((quote, index) => (
+                    <li className={`sentQuote sentQuote--${share.key}`} key={`${share.key}-${index}`}>
                       {quote}
                     </li>
                   ))}
