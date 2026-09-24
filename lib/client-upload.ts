@@ -25,6 +25,43 @@ import { upload } from '@vercel/blob/client';
 
 export const TRANSIENT_UPLOAD_PREFIX = 'transient-uploads/';
 
+const TOKEN_ENDPOINT = '/api/imports/blob-upload';
+
+/**
+ * Ask the token endpoint directly why it refused, and return its message.
+ *
+ * The SDK reports every token-retrieval failure as the same opaque sentence
+ * — a store that isn't configured, a rejected pathname and a server crash all
+ * read identically — and it discards the response body that says which. So
+ * when `upload()` fails, this replays the same request the SDK just made and
+ * reads the error the endpoint actually sent, leaving the person with
+ * something they can act on instead of a generic string.
+ *
+ * Only ever called on the failure path, so the happy path is still one
+ * request per file.
+ */
+async function explainTokenFailure(pathname: string, community: string): Promise<string | null> {
+  try {
+    const res = await fetch(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'blob.generate-client-token',
+        payload: {
+          pathname,
+          multipart: true,
+          clientPayload: JSON.stringify({ community }),
+        },
+      }),
+    });
+    if (res.ok) return null;
+    const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+    return payload?.error ?? `the upload authorisation endpoint returned ${res.status}`;
+  } catch {
+    return null;
+  }
+}
+
 export interface UploadProgress {
   /** 1-based index of the file currently being sent. */
   fileIndex: number;
@@ -59,22 +96,33 @@ async function uploadToBlob(
   const refs: BlobRef[] = [];
 
   for (const [index, file] of files.entries()) {
-    const result = await upload(`${TRANSIENT_UPLOAD_PREFIX}${file.name}`, file, {
-      access,
-      handleUploadUrl: '/api/imports/blob-upload',
-      clientPayload: JSON.stringify({ community }),
-      // Splits a large export into parts, uploads them in parallel and
-      // retries the ones that fail — without this a single dropped chunk
-      // 70MB into an 80MB export restarts the whole thing.
-      multipart: true,
-      onUploadProgress: ({ percentage }) =>
-        onProgress?.({
-          fileIndex: index + 1,
-          fileCount: files.length,
-          filename: file.name,
-          percentage,
-        }),
-    });
+    const pathname = `${TRANSIENT_UPLOAD_PREFIX}${file.name}`;
+    let result;
+    try {
+      result = await upload(pathname, file, {
+        access,
+        handleUploadUrl: TOKEN_ENDPOINT,
+        clientPayload: JSON.stringify({ community }),
+        // Splits a large export into parts, uploads them in parallel and
+        // retries the ones that fail — without this a single dropped chunk
+        // 70MB into an 80MB export restarts the whole thing.
+        multipart: true,
+        onUploadProgress: ({ percentage }) =>
+          onProgress?.({
+            fileIndex: index + 1,
+            fileCount: files.length,
+            filename: file.name,
+            percentage,
+          }),
+      });
+    } catch (err) {
+      const reason = await explainTokenFailure(pathname, community);
+      throw new Error(
+        reason
+          ? `${file.name} could not be uploaded: ${reason}`
+          : `${file.name} could not be uploaded: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     refs.push({
       url: result.url,
