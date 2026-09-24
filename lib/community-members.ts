@@ -1,155 +1,73 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import type { CommunityMemberEntry, CommunitySlug } from './types';
+import type { CommunitySlug } from './types';
+import type { ReportPeriod } from './reports';
 import { isCommunitySlug } from './groups';
-import { isValidISODate } from './period';
-import { readJsonObject, vercelBlobEnabled, writeJsonObject } from './vercel-blob';
+import {
+  createEntryLog,
+  entryForPeriod,
+  historyOf,
+  levelForPeriod,
+  type LogEntry,
+} from './entry-log';
 
 /**
- * Manual "Total Members" entries, one append-only history per community.
+ * Manual "Total Members" entries, one append-only history per community,
+ * each filed against a report period — see lib/entry-log.ts.
  *
  * WhatsApp exports don't reliably contain a group's full join/leave history
- * (older events can be missing depending on export settings and app
- * version), so a replay-based member total silently undercounts — see the
- * module doc in lib/imports/whatsapp.ts. Total membership is tracked here
- * instead: a person enters a total for a community as of a chosen date, and
- * every entry is kept (never overwritten in place, except when re-saving the
- * same community+date to correct a mistake), so "vs. last entry" is always
- * answerable.
+ * (older events can be missing depending on export settings and app version),
+ * so a replay-based member total silently undercounts — see the module doc in
+ * lib/imports/whatsapp.ts. Total membership is entered by hand instead.
  *
- * Same dual-backend pattern as lib/imports/store.ts and lib/ai/store.ts:
- * Vercel Blob when BLOB_READ_WRITE_TOKEN is set (required on Vercel), a
- * local JSON file otherwise (the zero-config default for `npm run dev`).
+ * A member total is a **level**, not a flow: it is the size of the community
+ * at a point in time, so last period's reading remains the best available
+ * answer until a newer one is entered. That is why reads go through
+ * `levelForPeriod` rather than demanding an exact match the way leads do.
  */
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const STORE_FILE = path.join(DATA_DIR, 'community-members.json');
-const STORAGE_OBJECT = 'community-members.json';
+export type CommunityMemberEntry = LogEntry<CommunitySlug>;
 
-function normalizeEntry(raw: unknown): CommunityMemberEntry | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  if (!isCommunitySlug(r.community)) return null;
-  const total = Math.max(0, Math.round(Number(r.total) || 0));
-  const enteredAt = String(r.enteredAt ?? '');
-  if (!isValidISODate(enteredAt)) return null;
-  return {
-    community: r.community,
-    total,
-    enteredAt,
-    recordedAt: String(r.recordedAt ?? new Date().toISOString()),
-  };
-}
+const log = createEntryLog<CommunitySlug>({
+  fileName: 'community-members.json',
+  isScope: isCommunitySlug,
+});
 
-function sortEntries(entries: CommunityMemberEntry[]): CommunityMemberEntry[] {
-  return [...entries].sort((a, b) => (a.enteredAt < b.enteredAt ? -1 : a.enteredAt > b.enteredAt ? 1 : 0));
-}
+/** Every entry, every community, oldest period first. */
+export const getCommunityMemberEntries = log.getEntries;
 
-async function readLocalFile(): Promise<unknown> {
-  try {
-    const text = await fs.readFile(STORE_FILE, 'utf8');
-    return JSON.parse(text);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-}
-
-async function writeEntries(entries: CommunityMemberEntry[]): Promise<void> {
-  const sorted = sortEntries(entries);
-  if (vercelBlobEnabled()) {
-    await writeJsonObject(STORAGE_OBJECT, sorted);
-    return;
-  }
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(STORE_FILE, `${JSON.stringify(sorted, null, 2)}\n`, 'utf8');
-}
-
-/** Every entry, every community, oldest first. */
-export async function getCommunityMemberEntries(): Promise<CommunityMemberEntry[]> {
-  const raw = vercelBlobEnabled()
-    ? await readJsonObject<unknown>(STORAGE_OBJECT, [])
-    : await readLocalFile();
-  if (!Array.isArray(raw)) return [];
-  return sortEntries(raw.map(normalizeEntry).filter((e): e is CommunityMemberEntry => e !== null));
-}
-
-/**
- * Record one community's total as of `enteredAt` (defaults to today).
- * Re-saving the same community + date replaces that entry (correcting a
- * mistake) rather than creating a duplicate; any other date is added as a
- * new point in the history.
- */
-export async function saveCommunityMemberEntry(
+/** Record one community's total for a report period. */
+export function saveCommunityMemberEntry(
   community: CommunitySlug,
   total: number,
-  enteredAt: string,
+  period: ReportPeriod,
 ): Promise<CommunityMemberEntry> {
-  const entry: CommunityMemberEntry = {
-    community,
-    total: Math.max(0, Math.round(total)),
-    enteredAt,
-    recordedAt: new Date().toISOString(),
-  };
-  const current = await getCommunityMemberEntries();
-  const others = current.filter((e) => !(e.community === community && e.enteredAt === enteredAt));
-  await writeEntries([...others, entry]);
-  return entry;
+  return log.saveEntry(community, total, period);
 }
 
-/** One community's history, oldest first. */
+/** One community's history, oldest period first. */
 export function communityMemberHistory(
   entries: CommunityMemberEntry[],
   community: CommunitySlug,
 ): CommunityMemberEntry[] {
-  return entries.filter((e) => e.community === community);
+  return historyOf(entries, community);
 }
 
-/** The most recent entry for a community, or null if none has ever been saved. */
-export function latestCommunityMemberEntry(
+/** The total entered for exactly this period, or null — what the form pre-fills with. */
+export function communityMembersEnteredFor(
   entries: CommunityMemberEntry[],
   community: CommunitySlug,
+  period: ReportPeriod,
 ): CommunityMemberEntry | null {
-  const history = communityMemberHistory(entries, community);
-  return history[history.length - 1] ?? null;
-}
-
-/** The entry immediately before the latest one for a community, or null if there's only one (or none). */
-export function previousCommunityMemberEntry(
-  entries: CommunityMemberEntry[],
-  community: CommunitySlug,
-): CommunityMemberEntry | null {
-  const history = communityMemberHistory(entries, community);
-  return history[history.length - 2] ?? null;
+  return entryForPeriod(entries, community, period);
 }
 
 /**
- * The total that was current at the end of a report period — the latest entry
- * dated on or before it.
- *
- * This is what a report for a past range must use. Reading "the latest entry"
- * instead would let September's count silently rewrite August's report the
- * moment it was typed in, which would make the filed history meaningless.
+ * The total this period reports: its own entry, or the most recent earlier
+ * one carried forward.
  */
-export function communityMembersAsOf(
+export function communityMembersFor(
   entries: CommunityMemberEntry[],
   community: CommunitySlug,
-  periodEnd: string,
+  period: ReportPeriod,
 ): CommunityMemberEntry | null {
-  const eligible = communityMemberHistory(entries, community).filter(
-    (e) => e.enteredAt <= periodEnd,
-  );
-  return eligible[eligible.length - 1] ?? null;
-}
-
-/** The total that was current before a report period began. */
-export function communityMembersBefore(
-  entries: CommunityMemberEntry[],
-  community: CommunitySlug,
-  periodStart: string,
-): CommunityMemberEntry | null {
-  const eligible = communityMemberHistory(entries, community).filter(
-    (e) => e.enteredAt < periodStart,
-  );
-  return eligible[eligible.length - 1] ?? null;
+  return levelForPeriod(entries, community, period);
 }

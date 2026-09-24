@@ -14,6 +14,7 @@ import {
   communityMembers,
   headlineTakeaways,
   instagramMembers,
+  instagramMembersEntered,
   loadDashboard,
   perCommunityTotals,
   previousCommunityLeads,
@@ -51,7 +52,11 @@ export default async function OverviewPage({
   const { period: periodParam } = await searchParams;
   const data = await loadDashboard(periodParam);
 
-  const byCommunity = perCommunityTotals(data);
+  // Sorted by volume, loudest first, to match the weekly report: the ranking
+  // is the point of this chart, and registry order buried it.
+  const byCommunity = [...perCommunityTotals(data)].sort(
+    (a, b) => b.totals.messageCount - a.totals.messageCount,
+  );
   const stored = await getOverviewTakeaways();
   const takeaways = stored?.takeaways ?? headlineTakeaways(data);
   const aiAvailable = groqEnabled();
@@ -62,7 +67,7 @@ export default async function OverviewPage({
 
   const memberRows = COMMUNITIES.map((community) => ({
     community,
-    current: communityMembers(data, community.slug)?.total ?? null,
+    current: communityMembers(data, community.slug)?.value ?? null,
     previous: previousCommunityMembers(data, community.slug),
   }));
 
@@ -126,7 +131,7 @@ export default async function OverviewPage({
             lives here beside its figures rather than on a community tab. */}
         <InstagramEntryForm
           key={`ig-${data.period.start}-${data.period.end}`}
-          currentMembers={instagramMembers(data)}
+          currentMembers={instagramMembersEntered(data)}
           createdOn={data.instagramChannel.createdOn}
           period={data.activePeriod}
         />
@@ -185,7 +190,7 @@ export default async function OverviewPage({
           <div className="calloutGrid">
             {takeaways.map((t, i) => (
               <div
-                className={`callout${t.tone === 'good' ? ' callout--good' : ''}`}
+                className={`callout${t.tone === 'good' ? ' callout--good' : t.tone === 'urgent' ? ' callout--urgent' : ''}`}
                 key={`${t.tag}-${i}`}
               >
                 <span className="callout__tag">{t.tag}</span>

@@ -12,6 +12,7 @@ import {
   activityExtremes,
   communityLeads,
   communityMembers,
+  communityMembersEntered,
   communityTotals,
   groupsInCommunity,
   loadDashboard,
@@ -54,6 +55,7 @@ export default async function CommunityPage({
   const perGroup = groupsInCommunity(data, community.slug);
   const totals = communityTotals(data, community.slug);
   const { busiest, quietest } = activityExtremes(perGroup);
+  const byVolume = [...perGroup].sort((a, b) => (b.messageCount ?? 0) - (a.messageCount ?? 0));
   const maxMessages = Math.max(...perGroup.map((m) => m.messageCount ?? 0), 1);
 
   const busiestGroup = busiest ? getGroup(busiest.group) : null;
@@ -98,7 +100,7 @@ export default async function CommunityPage({
         eyebrow={`${community.label} · Weekly report`}
         title={community.name}
         periodLabel={`${formatDateRange(data.period.start, data.period.end)}${
-          memberEntry ? ` · ${formatExact(memberEntry.total)} members` : ''
+          memberEntry ? ` · ${formatExact(memberEntry.value)} members` : ''
         }`}
       />
 
@@ -157,14 +159,14 @@ export default async function CommunityPage({
           endpoint="/api/community-members"
           valueField="total"
           extraPayload={{ community: community.slug }}
-          currentValue={memberEntry?.total ?? null}
+          currentValue={communityMembersEntered(data, community.slug)}
           period={data.activePeriod}
           placeholder="e.g. 1904"
         />
 
         <h2 className="sectionTitle">Members vs. previous report</h2>
         <MemberComparison
-          currentMembers={memberEntry?.total ?? 0}
+          currentMembers={memberEntry?.value ?? 0}
           previousMembers={previousMembers}
           previousLabel={previousLabel}
         />
@@ -194,7 +196,10 @@ export default async function CommunityPage({
         <section className="card">
           <div className="card__body">
             <div className="bars">
-              {perGroup.map((m) => {
+              {/* Sorted by volume like the community chart on the Overview —
+                  the ranking is what this is for. The snapshot cards below
+                  keep registry order, since those are looked up by name. */}
+              {byVolume.map((m) => {
                 const group = getGroup(m.group);
                 const value = m.messageCount ?? 0;
                 return (

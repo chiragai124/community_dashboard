@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { generateOverviewTakeaways, groqEnabled } from '@/lib/ai/groq';
 import { saveOverviewTakeaways } from '@/lib/ai/store';
 import { getImports, latestGroupPeriod } from '@/lib/imports';
-import { getCommunityMemberEntries, latestCommunityMemberEntry } from '@/lib/community-members';
+import { communityMembersFor, getCommunityMemberEntries } from '@/lib/community-members';
+import { getActivePeriod } from '@/lib/reports';
 import { COMMUNITIES, groupsOf } from '@/lib/groups';
 
 // The Groq call here can run long enough to exceed Vercel's default (10s on
@@ -23,7 +24,12 @@ export async function POST() {
     );
   }
 
-  const [imports, memberEntries] = await Promise.all([getImports(), getCommunityMemberEntries()]);
+  const [imports, memberEntries, period] = await Promise.all([
+    getImports(),
+    getCommunityMemberEntries(),
+    // The period the takeaways describe: whatever the dashboard is reporting on.
+    getActivePeriod(),
+  ]);
 
   const communities = COMMUNITIES.map((community) => {
     const groups = groupsOf(community.slug)
@@ -37,7 +43,7 @@ export async function POST() {
         };
       })
       .filter((g): g is NonNullable<typeof g> => g !== null);
-    const memberCount = latestCommunityMemberEntry(memberEntries, community.slug)?.total ?? 0;
+    const memberCount = communityMembersFor(memberEntries, community.slug, period)?.value ?? 0;
     const messageCount = groups.length === 0
       ? 0
       : groupsOf(community.slug).reduce((sum, g) => {

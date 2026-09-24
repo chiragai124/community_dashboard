@@ -1,4 +1,4 @@
-import { COMMUNITIES, groupsOf } from './groups';
+import { COMMUNITIES, getGroup, groupsOf } from './groups';
 import {
   getImports,
   groupPeriodFor,
@@ -9,20 +9,21 @@ import {
 } from './imports';
 import { buildGroupPeriodMetrics } from './metrics';
 import {
-  communityMembersAsOf,
-  communityMembersBefore,
+  communityMembersEnteredFor,
+  communityMembersFor,
   getCommunityMemberEntries,
+  type CommunityMemberEntry,
 } from './community-members';
 import {
-  communityLeadsIn,
+  communityLeadsFor,
   getCommunityLeadEntries,
   type CommunityLeadEntry,
 } from './community-leads';
 import {
   getInstagramChannel,
   getInstagramMemberEntries,
-  instagramMembersAsOf,
-  instagramMembersBefore,
+  instagramMembersEnteredFor,
+  instagramMembersFor,
   type InstagramChannel,
   type InstagramMemberEntry,
 } from './instagram';
@@ -41,7 +42,6 @@ import {
   type ReportSnapshot,
 } from './reports';
 import type {
-  CommunityMemberEntry,
   CommunitySlug,
   Ga4Figures,
   GroupPeriodMetrics,
@@ -194,12 +194,24 @@ export function activityExtremes(
 
 /* ------------------------------------------------------------ member totals */
 
-/** One community's member total for this period, or null if none had been entered by then. */
+/**
+ * One community's member total for this period: its own entry, or the most
+ * recent earlier one carried forward (a member total is a level, so last
+ * period's reading stands until a newer one is entered).
+ */
 export function communityMembers(
   data: DashboardData,
   community: CommunitySlug,
 ): CommunityMemberEntry | null {
-  return communityMembersAsOf(data.memberEntries, community, data.period.end);
+  return communityMembersFor(data.memberEntries, community, data.period);
+}
+
+/** The total entered for exactly this period — what the entry form pre-fills. */
+export function communityMembersEntered(
+  data: DashboardData,
+  community: CommunitySlug,
+): number | null {
+  return communityMembersEnteredFor(data.memberEntries, community, data.period)?.value ?? null;
 }
 
 /**
@@ -208,7 +220,7 @@ export function communityMembers(
  * The previously-filed report is the baseline wherever one exists — that is
  * the whole point of keeping report records, and it means nobody re-types
  * last week's numbers. Before the first report exists there is nothing to
- * read, so this falls back to the entry log's own earlier reading, which is
+ * read, so this falls back to that community's own previous entry, which is
  * the same answer by a different route.
  */
 export function previousCommunityMembers(
@@ -217,14 +229,17 @@ export function previousCommunityMembers(
 ): number | null {
   const fromReport = data.previous?.snapshot.communities.find((c) => c.community === community);
   if (fromReport && fromReport.members !== null) return fromReport.members;
-  return communityMembersBefore(data.memberEntries, community, data.period.start)?.total ?? null;
+  const earlier = data.memberEntries.filter(
+    (e) => e.scope === community && e.periodStart < data.period.start,
+  );
+  return earlier[earlier.length - 1]?.value ?? null;
 }
 
 /* ------------------------------------------------------------------- leads */
 
 /** Leads one community added during this period, or null if none was entered for it. */
 export function communityLeads(data: DashboardData, community: CommunitySlug): number | null {
-  return communityLeadsIn(data.leadEntries, community, data.period)?.value ?? null;
+  return communityLeadsFor(data.leadEntries, community, data.period)?.value ?? null;
 }
 
 /**
@@ -267,9 +282,14 @@ export function allCommunitiesLeads(data: DashboardData): {
 
 /* --------------------------------------------------------------- Instagram */
 
-/** The broadcast channel's member count for this period. */
+/** The broadcast channel's member count for this period — a level, so it carries forward. */
 export function instagramMembers(data: DashboardData): number | null {
-  return instagramMembersAsOf(data.instagramEntries, data.period.end)?.value ?? null;
+  return instagramMembersFor(data.instagramEntries, data.period)?.value ?? null;
+}
+
+/** The count entered for exactly this period — what the entry form pre-fills. */
+export function instagramMembersEntered(data: DashboardData): number | null {
+  return instagramMembersEnteredFor(data.instagramEntries, data.period)?.value ?? null;
 }
 
 /** Its count at the last report. */
@@ -277,7 +297,8 @@ export function previousInstagramMembers(data: DashboardData): number | null {
   if (data.previous && data.previous.snapshot.instagramMembers !== null) {
     return data.previous.snapshot.instagramMembers;
   }
-  return instagramMembersBefore(data.instagramEntries, data.period.start)?.value ?? null;
+  const earlier = data.instagramEntries.filter((e) => e.periodStart < data.period.start);
+  return earlier[earlier.length - 1]?.value ?? null;
 }
 
 /* ---------------------------------------------------- imported-figure series */
@@ -366,7 +387,13 @@ export const GA4_FIGURES: {
 export interface Takeaway {
   tag: string;
   text: string;
-  tone: 'good' | 'neutral';
+  /**
+   * `urgent` is for something a person should look at now — a group whose
+   * conversation has turned sharply negative. The weekly report uses a third,
+   * red callout for exactly this (a spam wave, a public argument), and with
+   * only good/neutral there was no way to say it.
+   */
+  tone: 'good' | 'neutral' | 'urgent';
 }
 
 /**
@@ -393,6 +420,28 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
           tone: 'good',
         });
       }
+    }
+  }
+
+  /*
+   * A group whose conversation has turned sharply negative, flagged for a
+   * moderator look. Thresholded on both share and volume: 40% negative out of
+   * five messages is two grumbles, not a problem, and flagging it would train
+   * people to ignore the flag.
+   */
+  for (const community of COMMUNITIES) {
+    for (const metrics of groupsInCommunity(data, community.slug)) {
+      const negative = metrics.sentiment.negativePct;
+      if (negative === null || (metrics.messageCount ?? 0) < 20) continue;
+      if (negative < 25) continue;
+      takeaways.push({
+        tag: 'Worth a look',
+        text:
+          `${getGroup(metrics.group)?.label ?? metrics.group} (${community.label}) ran ` +
+          `${negative.toFixed(0)}% negative across ${metrics.messageCount} messages this period — ` +
+          `worth a moderator read.`,
+        tone: 'urgent',
+      });
     }
   }
 
@@ -423,9 +472,31 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
     }
   }
 
+  // Communities that shrank this period — the reference report's amber
+  // "still declining" callout. Pooled into one line rather than one per
+  // community, which would crowd out everything else.
+  const shrinking = COMMUNITIES.map((c) => ({
+    community: c,
+    current: communityMembers(data, c.slug)?.value ?? null,
+    previous: previousCommunityMembers(data, c.slug),
+  })).filter(
+    (c): c is { community: (typeof COMMUNITIES)[number]; current: number; previous: number } =>
+      c.current !== null && c.previous !== null && c.current < c.previous,
+  );
+  if (shrinking.length > 0) {
+    takeaways.push({
+      tag: shrinking.length === 1 ? 'Declining' : 'Still declining',
+      text:
+        `${shrinking
+          .map((c) => `${c.community.label} (${c.current - c.previous})`)
+          .join(', ')} lost members this period.`,
+      tone: 'neutral',
+    });
+  }
+
   const communitiesWithMembers = COMMUNITIES.map((c) => ({
     community: c,
-    total: communityMembers(data, c.slug)?.total ?? null,
+    total: communityMembers(data, c.slug)?.value ?? null,
   })).filter((c): c is { community: (typeof COMMUNITIES)[number]; total: number } => c.total !== null);
   const smallest = [...communitiesWithMembers].sort((a, b) => a.total - b.total)[0];
   if (smallest && communitiesWithMembers.length > 1 && smallest.total < 1000) {
@@ -449,7 +520,7 @@ export function liveSnapshot(data: DashboardData): ReportSnapshot {
     const totals = communityTotals(data, c.slug);
     return {
       community: c.slug,
-      members: communityMembers(data, c.slug)?.total ?? null,
+      members: communityMembers(data, c.slug)?.value ?? null,
       leads: communityLeads(data, c.slug),
       messageCount: totals.messageCount,
       uniqueActiveChatters: totals.uniqueActiveChatters,
@@ -508,22 +579,17 @@ export async function refreshAllReports(): Promise<number> {
 }
 
 /**
- * Refresh every filed report a hand-entered figure could have changed.
+ * Refresh the filed reports a hand-entered figure could have changed: the
+ * period it was filed for, and the active one if that differs (correcting a
+ * past report shouldn't leave the current one stale, since a member total
+ * carries forward into it).
  *
- * A number entered as of some date belongs to whichever report period covers
- * that date — usually the active one, but not when a past report is being
- * corrected. Both are refreshed, and sequentially: each `refreshReport` does
- * its own read-modify-write of the same reports document, so running them
- * concurrently would let one overwrite the other's record.
+ * Sequential on purpose: each `refreshReport` does its own read-modify-write
+ * of the same reports document, so running them concurrently would let one
+ * overwrite the other's record.
  */
-export async function refreshReportsFor(enteredAt: string): Promise<void> {
-  const [active, reports] = await Promise.all([getActivePeriod(), getReports()]);
-  const covering = reports
-    .filter((r) => r.periodStart <= enteredAt && enteredAt <= r.periodEnd)
-    .map((r) => ({ start: r.periodStart, end: r.periodEnd }));
-
-  const periods = [active, ...covering].filter(
-    (period, index, all) => all.findIndex((p) => samePeriod(p, period)) === index,
-  );
-  for (const period of periods) await refreshReport(period);
+export async function refreshReportsFor(period: ReportPeriod): Promise<void> {
+  const active = await getActivePeriod();
+  const periods = samePeriod(period, active) ? [period] : [period, active];
+  for (const p of periods) await refreshReport(p);
 }
