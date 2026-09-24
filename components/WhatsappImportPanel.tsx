@@ -2,43 +2,47 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import type { GroupSlug, ImportedFile } from '@/lib/types';
+import type { CommunitySlug, GroupSlug, ImportedFile } from '@/lib/types';
 import type { SourceInfo } from '@/components/ImportPanel';
 import { DateRangeFields } from '@/components/DateRangeFields';
 import { formatRelativeTime } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { splitNotes } from '@/lib/notes';
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /**
- * The WhatsApp upload control for one group: a manually-entered start/end
- * date and a file input.
+ * The WhatsApp upload control for one group on its own.
  *
- * The export should still be the group's full chat history (needed to
- * replay member totals accurately), but the two dates here decide exactly
- * which messages count toward this report — not whatever weeks the export's
- * own timestamps happen to fall into. Filing the same range again replaces
- * it; filing a new one adds it as this group's latest report.
+ * The normal route is the community tab, which takes every group's export at
+ * once and works out which is which from the chats' own names. This is the
+ * fallback for the one export that can't be matched — a file whose name and
+ * transcript give nothing away — so the group is pinned explicitly here
+ * rather than detected.
+ *
+ * The export should still be the group's full chat history, but the two dates
+ * decide exactly which messages count toward this report. Filing the same
+ * range again replaces it.
  */
 export function WhatsappImportPanel({
   group,
   groupLabel,
+  community,
   info,
+  period,
   existing,
 }: {
   group: GroupSlug;
   groupLabel: string;
+  community: CommunitySlug;
   info: SourceInfo;
+  /** The period being reported on — seeds the date fields. */
+  period: { start: string; end: string };
   /** Every period stored for this group, any freshness. */
   existing: ImportedFile[];
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [periodStart, setPeriodStart] = useState(today);
-  const [periodEnd, setPeriodEnd] = useState(today);
+  const [periodStart, setPeriodStart] = useState(period.start);
+  const [periodEnd, setPeriodEnd] = useState(period.end);
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +88,9 @@ export function WhatsappImportPanel({
       const body = new FormData();
       body.set('file', file);
       body.set('source', 'whatsapp');
+      body.set('community', community);
+      // Pinned, not detected: this panel exists precisely for the export that
+      // detection couldn't place.
       body.set('group', group);
       body.set('periodStart', periodStart);
       body.set('periodEnd', periodEnd);
@@ -91,11 +98,14 @@ export function WhatsappImportPanel({
       const res = await fetch('/api/imports', { method: 'POST', body });
       const payload = (await res.json().catch(() => ({}))) as {
         error?: string;
-        periodStart?: string | null;
-        periodEnd?: string | null;
-        notes?: string[];
-        warnings?: string[];
-        aiGenerated?: boolean;
+        period?: { start: string; end: string };
+        results?: {
+          ok: boolean;
+          error: string | null;
+          notes: string[];
+          warnings: string[];
+          aiGenerated: boolean;
+        }[];
       };
       if (!res.ok) {
         // A killed serverless function (timeout, memory limit) often comes
@@ -108,15 +118,18 @@ export function WhatsappImportPanel({
             : res.status === 413
               ? 'That file is too large for this upload.'
               : `Upload failed (${res.status}).`;
-        throw new Error(payload.error ?? fallback);
+        // One file in, so this batch's single per-file error says far more
+        // than the headline does.
+        throw new Error(payload.results?.[0]?.error ?? payload.error ?? fallback);
       }
 
+      const outcome = payload.results?.[0];
       setResult({
-        periodStart: payload.periodStart ?? null,
-        periodEnd: payload.periodEnd ?? null,
-        notes: payload.notes ?? [],
-        warnings: payload.warnings ?? [],
-        aiGenerated: payload.aiGenerated ?? false,
+        periodStart: payload.period?.start ?? null,
+        periodEnd: payload.period?.end ?? null,
+        notes: outcome?.notes ?? [],
+        warnings: outcome?.warnings ?? [],
+        aiGenerated: outcome?.aiGenerated ?? false,
       });
       startTransition(() => router.refresh());
     } catch (err) {
@@ -142,11 +155,11 @@ export function WhatsappImportPanel({
         <span className="qual__chevron" aria-hidden="true">
           ▶
         </span>
-        <span className="qual__summaryLabel">Import WhatsApp chat</span>
+        <span className="qual__summaryLabel">Import this group&rsquo;s chat on its own</span>
         <span className="qual__summaryHint">
           {latestUpload && latestUpload.periodStart && latestUpload.periodEnd
-            ? `${info.label} — latest report: ${formatDateRange(latestUpload.periodStart, latestUpload.periodEnd)}`
-            : `${info.label} — upload ${groupLabel}'s chat export`}
+            ? `Fallback upload — ${groupLabel}'s latest report: ${formatDateRange(latestUpload.periodStart, latestUpload.periodEnd)}`
+            : `Fallback upload — use the community tab unless this export can't be matched`}
         </span>
       </summary>
       <div className="imp__body">
@@ -187,9 +200,9 @@ export function WhatsappImportPanel({
           </label>
 
           <p className="chartNote" style={{ marginTop: 0 }}>
-            Upload the group's full chat export — only messages between the two dates above count
-            toward this report; the rest of the export is still used to work out an accurate member
-            total as of the end date.
+            Upload {groupLabel}&rsquo;s full chat export — only messages between the two dates above
+            count toward this report. Most weeks you want the community tab instead, which takes
+            every group&rsquo;s export in one go.
           </p>
 
           {working ? (

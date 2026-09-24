@@ -1,12 +1,45 @@
 import { COMMUNITIES, groupsOf } from './groups';
-import { ga4Week, getImports, latestGroupPeriod, shortioWeek } from './imports';
+import {
+  getImports,
+  groupPeriodFor,
+  groupPeriods,
+  resolveGa4,
+  resolveShortio,
+  type ResolvedImport,
+} from './imports';
 import { buildGroupPeriodMetrics } from './metrics';
 import {
+  communityMembersAsOf,
+  communityMembersBefore,
   getCommunityMemberEntries,
-  latestCommunityMemberEntry,
-  previousCommunityMemberEntry,
 } from './community-members';
-import { currentWeekStart, lastNWeeks, parseISODate, weekStartOf } from './weeks';
+import {
+  communityLeadsIn,
+  getCommunityLeadEntries,
+  type CommunityLeadEntry,
+} from './community-leads';
+import {
+  getInstagramChannel,
+  getInstagramMemberEntries,
+  instagramMembersAsOf,
+  instagramMembersBefore,
+  type InstagramChannel,
+  type InstagramMemberEntry,
+} from './instagram';
+import {
+  findReport,
+  getActivePeriod,
+  getReports,
+  parsePeriodId,
+  previousReport,
+  samePeriod,
+  upsertReport,
+  type FiledReport,
+  type CommunityReportLine,
+  type GroupReportLine,
+  type ReportPeriod,
+  type ReportSnapshot,
+} from './reports';
 import type {
   CommunityMemberEntry,
   CommunitySlug,
@@ -19,68 +52,90 @@ import type {
 } from './types';
 
 /**
- * One loader shared by every page: every imported file, assembled into the
- * current-period metrics for every WhatsApp group plus (for the Landing
- * page & WADL page only) the GA4/Short.io week being displayed.
+ * One loader shared by every page, and one date range shared by every
+ * section of it.
  *
- * WhatsApp reports are keyed by a manually-entered date range per group, not
- * by a shared "displayed week" — each group simply shows its own most
- * recently filed period, independent of every other group. GA4/Short.io are
- * untouched and stay on the original Monday-anchored week system.
+ * The dashboard used to run on three different clocks at once: WhatsApp on
+ * whatever range each group's last upload happened to use, Short.io and GA4
+ * on their own Monday-anchored weeks, member counts on whenever someone last
+ * typed one in. A single page could show four different time spans without
+ * saying so. Now there is exactly one period — the active one, or a past
+ * report being browsed — and every figure on the page answers for it.
+ *
+ * Anything that can't answer for it says why: a group with no export filed
+ * for the period reports nothing rather than its last known numbers, and
+ * Short.io/GA4 figures carry the provenance of whichever export was used (see
+ * lib/imports/resolve.ts).
  */
 
-export const TREND_WINDOW = 8;
-
 export interface DashboardData {
-  /** Every uploaded file, newest first. */
+  /** The date range every figure on the page answers for. */
+  period: ReportPeriod;
+  /** False when a past report is being browsed rather than the current period. */
+  isActivePeriod: boolean;
+  /** The active period, whatever is being viewed — for "back to current" links. */
+  activePeriod: ReportPeriod;
+  /** Every filed report, oldest first — the past-reports picker. */
+  reports: FiledReport[];
+  /** This period's own filed record, if it has one yet. */
+  current: FiledReport | null;
+  /** The baseline for every "vs. last report" figure on the page. */
+  previous: FiledReport | null;
+
   imports: ImportedFile[];
-  /** GA4/Short.io only: the week every "this week" figure on the Landing page & WADL refers to. */
-  displayWeek: string;
-  /** GA4/Short.io only: trailing window ending at displayWeek, oldest first. */
-  weeks: string[];
-  /** Each group's most recently filed WhatsApp report period. */
   perGroup: GroupPeriodMetrics[];
-  /** Every manually-entered community member-total reading, every community. */
+
   memberEntries: CommunityMemberEntry[];
+  leadEntries: CommunityLeadEntry[];
+  instagramEntries: InstagramMemberEntry[];
+  instagramChannel: InstagramChannel;
+
+  ga4: ResolvedImport<Ga4Figures>;
+  shortio: ResolvedImport<ShortioFigures>;
 }
 
 /**
- * `weekOverride` only affects the Landing page & WADL's GA4/Short.io figures
- * (via the `?week=` query param there) — WhatsApp-derived data ignores it
- * entirely, since each group's report period is set manually per upload,
- * not selected from a shared week picker.
+ * `periodParam` is a `start:end` id from the past-reports picker. Anything
+ * unparseable falls back to the active period rather than erroring — a stale
+ * or hand-edited URL should show the current report, not a broken page.
  */
-export async function loadDashboard(weekOverride?: string | null): Promise<DashboardData> {
-  const thisWeek = currentWeekStart();
-  const [imports, memberEntries] = await Promise.all([getImports(), getCommunityMemberEntries()]);
+export async function loadDashboard(periodParam?: string | null): Promise<DashboardData> {
+  const [activePeriod, reports, imports, memberEntries, leadEntries, instagramEntries, instagramChannel] =
+    await Promise.all([
+      getActivePeriod(),
+      getReports(),
+      getImports(),
+      getCommunityMemberEntries(),
+      getCommunityLeadEntries(),
+      getInstagramMemberEntries(),
+      getInstagramChannel(),
+    ]);
 
-  let displayWeek: string;
-  if (weekOverride && /^\d{4}-\d{2}-\d{2}$/.test(weekOverride)) {
-    displayWeek = weekStartOf(parseISODate(weekOverride));
-  } else {
-    const nonWhatsappWeeks = [
-      ...new Set(
-        imports.filter((f) => f.source !== 'whatsapp' && f.weekStart).map((f) => f.weekStart!),
-      ),
-    ];
-    const hasCurrentWeek = nonWhatsappWeeks.includes(thisWeek);
-    displayWeek = hasCurrentWeek
-      ? thisWeek
-      : nonWhatsappWeeks.reduce((latest, w) => (w > latest ? w : latest), thisWeek);
-  }
+  const period = parsePeriodId(periodParam) ?? activePeriod;
 
   const perGroup = COMMUNITIES.flatMap((c) => c.groups).map((g) =>
-    buildGroupPeriodMetrics(g.slug, latestGroupPeriod(imports, g.slug)),
+    buildGroupPeriodMetrics(g.slug, groupPeriodFor(imports, g.slug, period)),
   );
 
   return {
+    period,
+    isActivePeriod: samePeriod(period, activePeriod),
+    activePeriod,
+    reports,
+    current: findReport(reports, period),
+    previous: previousReport(reports, period),
     imports,
-    displayWeek,
-    weeks: lastNWeeks(TREND_WINDOW, displayWeek),
     perGroup,
     memberEntries,
+    leadEntries,
+    instagramEntries,
+    instagramChannel,
+    ga4: resolveGa4(imports, period),
+    shortio: resolveShortio(imports, 'community-2', period),
   };
 }
+
+/* --------------------------------------------------------------- selectors */
 
 /** Current metrics for one community's groups, in display order. */
 export function groupsInCommunity(
@@ -95,15 +150,9 @@ export function groupsInCommunity(
 
 /** Every filed period for one group, oldest first — for the group page's message trend. */
 export function groupPeriodSeries(data: DashboardData, group: GroupSlug): GroupPeriodMetrics[] {
-  const periods = data.imports
-    .filter((f) => f.source === 'whatsapp' && f.group === group && f.periodStart)
-    .sort((a, b) => (a.periodStart! < b.periodStart! ? -1 : 1));
-  return periods.map((period) => buildGroupPeriodMetrics(group, period));
-}
-
-/** Weeks offered in the Short.io/GA4 upload panels: this week plus the previous 7, newest first. */
-export function entryWeekOptions(count = TREND_WINDOW): string[] {
-  return [...lastNWeeks(count, currentWeekStart())].reverse();
+  return groupPeriods(data.imports, group).map((period) =>
+    buildGroupPeriodMetrics(group, period),
+  );
 }
 
 /* --------------------------------------------------------- roll-ups & series */
@@ -121,54 +170,9 @@ export function rollup(metrics: GroupPeriodMetrics[]): RollupTotals {
   };
 }
 
-/* --------------------------------------------------------- member totals -- */
-
-/** One community's current manually-entered member total, or null if none has ever been saved. */
-export function communityMembers(data: DashboardData, community: CommunitySlug): CommunityMemberEntry | null {
-  return latestCommunityMemberEntry(data.memberEntries, community);
-}
-
-/** The entry immediately before the current one for a community, or null. */
-export function previousCommunityMembers(
-  data: DashboardData,
-  community: CommunitySlug,
-): CommunityMemberEntry | null {
-  return previousCommunityMemberEntry(data.memberEntries, community);
-}
-
-/**
- * Total members across every community — sum of each community's latest
- * entry — plus the comparable "previous" base: the sum of each community's
- * previous entry, but ONLY across communities that have one, so a community
- * with just one entry on file doesn't silently contribute a false zero
- * (which would understate the previous total rather than honestly having
- * nothing to compare for that community).
- */
-export function allCommunitiesMembers(
-  data: DashboardData,
-): { current: number; previous: number | null; anyPrevious: boolean } {
-  const current = COMMUNITIES.reduce(
-    (sum, c) => sum + (communityMembers(data, c.slug)?.total ?? 0),
-    0,
-  );
-  const previousEntries = COMMUNITIES.map((c) => previousCommunityMembers(data, c.slug)).filter(
-    (e): e is CommunityMemberEntry => e !== null,
-  );
-  return {
-    current,
-    previous: previousEntries.length > 0 ? previousEntries.reduce((s, e) => s + e.total, 0) : null,
-    anyPrevious: previousEntries.length > 0,
-  };
-}
-
 /** Pooled totals for one community. */
 export function communityTotals(data: DashboardData, community: CommunitySlug): RollupTotals {
   return rollup(groupsInCommunity(data, community));
-}
-
-/** Pooled totals across every community — the Overview page's headline figures. */
-export function allCommunitiesTotals(data: DashboardData): RollupTotals {
-  return rollup(data.perGroup);
 }
 
 /** Per-community roll-ups, in registry order. */
@@ -176,20 +180,6 @@ export function perCommunityTotals(
   data: DashboardData,
 ): { community: CommunitySlug; totals: RollupTotals }[] {
   return COMMUNITIES.map((c) => ({ community: c.slug, totals: communityTotals(data, c.slug) }));
-}
-
-/**
- * The widest date range covered by any group's latest filed period — the
- * closest thing to "the period" for the Overview page, which pools groups
- * that may each be on their own independently-filed range. Null when
- * nothing has been filed anywhere yet.
- */
-export function overallPeriodRange(data: DashboardData): { start: string; end: string } | null {
-  const withData = data.perGroup.filter((m) => m.periodStart && m.periodEnd);
-  if (withData.length === 0) return null;
-  const start = withData.reduce((min, m) => (m.periodStart! < min ? m.periodStart! : min), withData[0].periodStart!);
-  const end = withData.reduce((max, m) => (m.periodEnd! > max ? m.periodEnd! : max), withData[0].periodEnd!);
-  return { start, end };
 }
 
 /** This community's busiest and quietest group by message count this period, if any have data. */
@@ -201,6 +191,177 @@ export function activityExtremes(
   const sorted = [...withMessages].sort((a, b) => (b.messageCount ?? 0) - (a.messageCount ?? 0));
   return { busiest: sorted[0], quietest: sorted[sorted.length - 1] };
 }
+
+/* ------------------------------------------------------------ member totals */
+
+/** One community's member total for this period, or null if none had been entered by then. */
+export function communityMembers(
+  data: DashboardData,
+  community: CommunitySlug,
+): CommunityMemberEntry | null {
+  return communityMembersAsOf(data.memberEntries, community, data.period.end);
+}
+
+/**
+ * What this community's member total was at the last report.
+ *
+ * The previously-filed report is the baseline wherever one exists — that is
+ * the whole point of keeping report records, and it means nobody re-types
+ * last week's numbers. Before the first report exists there is nothing to
+ * read, so this falls back to the entry log's own earlier reading, which is
+ * the same answer by a different route.
+ */
+export function previousCommunityMembers(
+  data: DashboardData,
+  community: CommunitySlug,
+): number | null {
+  const fromReport = data.previous?.snapshot.communities.find((c) => c.community === community);
+  if (fromReport && fromReport.members !== null) return fromReport.members;
+  return communityMembersBefore(data.memberEntries, community, data.period.start)?.total ?? null;
+}
+
+/* ------------------------------------------------------------------- leads */
+
+/** Leads one community added during this period, or null if none was entered for it. */
+export function communityLeads(data: DashboardData, community: CommunitySlug): number | null {
+  return communityLeadsIn(data.leadEntries, community, data.period)?.value ?? null;
+}
+
+/**
+ * What that community reported at the last report.
+ *
+ * Only a filed report answers this. Leads are a flow, so there is no "reading
+ * that was current before this period" to fall back on the way there is for a
+ * member total — without a previous report there is simply nothing to compare
+ * against, and the funnel shows no arrow.
+ */
+export function previousCommunityLeads(
+  data: DashboardData,
+  community: CommunitySlug,
+): number | null {
+  return (
+    data.previous?.snapshot.communities.find((c) => c.community === community)?.leads ?? null
+  );
+}
+
+/**
+ * Leads across every community this period, and the comparable previous
+ * total. Null — not zero — when nothing has been entered anywhere, so "we
+ * haven't filled this in" stays distinguishable from "no leads came in".
+ */
+export function allCommunitiesLeads(data: DashboardData): {
+  current: number | null;
+  previous: number | null;
+} {
+  const currents = COMMUNITIES.map((c) => communityLeads(data, c.slug)).filter(
+    (v): v is number => v !== null,
+  );
+  const previouses = COMMUNITIES.map((c) => previousCommunityLeads(data, c.slug)).filter(
+    (v): v is number => v !== null,
+  );
+  return {
+    current: currents.length > 0 ? currents.reduce((s, v) => s + v, 0) : null,
+    previous: previouses.length > 0 ? previouses.reduce((s, v) => s + v, 0) : null,
+  };
+}
+
+/* --------------------------------------------------------------- Instagram */
+
+/** The broadcast channel's member count for this period. */
+export function instagramMembers(data: DashboardData): number | null {
+  return instagramMembersAsOf(data.instagramEntries, data.period.end)?.value ?? null;
+}
+
+/** Its count at the last report. */
+export function previousInstagramMembers(data: DashboardData): number | null {
+  if (data.previous && data.previous.snapshot.instagramMembers !== null) {
+    return data.previous.snapshot.instagramMembers;
+  }
+  return instagramMembersBefore(data.instagramEntries, data.period.start)?.value ?? null;
+}
+
+/* ---------------------------------------------------- imported-figure series */
+
+/** One Short.io figure across the last filed reports, oldest first. */
+export function shortioReportSeries(
+  data: DashboardData,
+  pick: (figures: ShortioFigures | null) => number | null,
+  count = 12,
+): { week: string; value: number | null }[] {
+  return reportWindow(data, count).map((report) => ({
+    week: report.periodEnd,
+    value: pick(report.snapshot.shortio),
+  }));
+}
+
+/**
+ * The last `count` filed reports up to and including this period, oldest
+ * first. The current period is included even before it has been filed, using
+ * live figures, so the newest point on a chart is the one being looked at.
+ */
+export function reportWindow(data: DashboardData, count: number): FiledReport[] {
+  const upTo = data.reports.filter((r) => r.periodEnd <= data.period.end);
+  const withCurrent = data.current
+    ? upTo
+    : [
+        ...upTo,
+        {
+          id: `${data.period.start}:${data.period.end}`,
+          periodStart: data.period.start,
+          periodEnd: data.period.end,
+          filedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          snapshot: liveSnapshot(data),
+        },
+      ];
+  return withCurrent.slice(Math.max(0, withCurrent.length - count));
+}
+
+/**
+ * Landing-page traffic at the last report, for the up/down arrows.
+ *
+ * Only a filed report answers this. There is no honest fallback: an earlier
+ * upload might cover any window at all, and differencing this period against
+ * a fortnight-long export would produce an arrow that means nothing. No
+ * previous report means no arrow.
+ */
+export function previousGa4(data: DashboardData): Ga4Figures | null {
+  return data.previous?.snapshot.ga4 ?? null;
+}
+
+/** Community #2's link clicks at the last report. */
+export function previousShortio(data: DashboardData): ShortioFigures | null {
+  return data.previous?.snapshot.shortio ?? null;
+}
+
+/** The three GA4 headline figures, in display order. */
+export const GA4_FIGURES: {
+  key: string;
+  label: string;
+  hint: string;
+  pick: (figures: Ga4Figures | null) => number | null;
+}[] = [
+  {
+    key: 'activeUsers',
+    label: 'Active users',
+    hint: 'GA4 · landing page',
+    pick: (g) => g?.activeUsers ?? null,
+  },
+  {
+    key: 'newUsers',
+    label: 'New users',
+    hint: 'GA4 · landing page',
+    pick: (g) => g?.newUsers ?? null,
+  },
+  {
+    key: 'sessions',
+    label: 'Sessions',
+    hint: 'GA4 · landing page · source/medium',
+    pick: (g) => g?.sessions ?? null,
+  },
+];
+
+/* ------------------------------------------------------------- takeaways -- */
 
 export interface Takeaway {
   tag: string;
@@ -223,16 +384,14 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
   for (const community of COMMUNITIES) {
     for (const group of groupsOf(community.slug)) {
       const current = data.perGroup.find((m) => m.group === group.slug);
-      if (current?.activityLevel === 'High') {
-        const prevSeries = groupPeriodSeries(data, group.slug);
-        const previous = prevSeries[prevSeries.length - 2];
-        if (previous?.activityLevel === 'Low') {
-          takeaways.push({
-            tag: 'Turnaround',
-            text: `${group.label} (${community.label}) swung from Low to High activity this period.`,
-            tone: 'good',
-          });
-        }
+      if (current?.activityLevel !== 'High') continue;
+      const previous = data.previous?.snapshot.groups.find((g) => g.group === group.slug);
+      if (previous?.activityLevel === 'Low') {
+        takeaways.push({
+          tag: 'Turnaround',
+          text: `${group.label} (${community.label}) swung from Low to High activity this period.`,
+          tone: 'good',
+        });
       }
     }
   }
@@ -243,10 +402,25 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
     const config = COMMUNITIES.find((c) => c.slug === busiest.community);
     takeaways.push({
       tag: 'Most active',
-      text: `${config?.label ?? busiest.community} led every community this period with ` +
+      text:
+        `${config?.label ?? busiest.community} led every community this period with ` +
         `${busiest.totals.messageCount.toLocaleString('en-US')} messages.`,
       tone: 'neutral',
     });
+  }
+
+  const leads = allCommunitiesLeads(data);
+  if (leads.current !== null && leads.previous !== null && leads.previous > 0) {
+    const change = leads.current - leads.previous;
+    if (Math.abs(change) >= Math.max(3, leads.previous * 0.2)) {
+      takeaways.push({
+        tag: change > 0 ? 'Leads up' : 'Leads down',
+        text:
+          `${leads.current.toLocaleString('en-US')} leads added this period, ` +
+          `${change > 0 ? 'up' : 'down'} from ${leads.previous.toLocaleString('en-US')}.`,
+        tone: change > 0 ? 'good' : 'neutral',
+      });
+    }
   }
 
   const communitiesWithMembers = COMMUNITIES.map((c) => ({
@@ -257,7 +431,8 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
   if (smallest && communitiesWithMembers.length > 1 && smallest.total < 1000) {
     takeaways.push({
       tag: 'New & small',
-      text: `${smallest.community.label} is still building, at ` +
+      text:
+        `${smallest.community.label} is still building, at ` +
         `${smallest.total.toLocaleString('en-US')} members.`,
       tone: 'neutral',
     });
@@ -266,79 +441,89 @@ export function headlineTakeaways(data: DashboardData): Takeaway[] {
   return takeaways.slice(0, 4);
 }
 
-/* ------------------------------------------------------- imported figures -- */
+/* -------------------------------------------------------- filing a report -- */
 
-/**
- * Landing-page GA4 figures for the displayed week. Deliberately NOT
- * community-scoped or pooled across communities — GA4 describes the
- * website's traffic, not any WhatsApp community's, so there is exactly one
- * of these, ever, not one per community summed together.
- */
-export function landingPageGa4(
-  data: DashboardData,
-  weekStart: string = data.displayWeek,
-): Ga4Figures | null {
-  return ga4Week(data.imports, weekStart);
-}
+/** Everything this period currently says, in the shape a filed report stores. */
+export function liveSnapshot(data: DashboardData): ReportSnapshot {
+  const communities: CommunityReportLine[] = COMMUNITIES.map((c) => {
+    const totals = communityTotals(data, c.slug);
+    return {
+      community: c.slug,
+      members: communityMembers(data, c.slug)?.total ?? null,
+      leads: communityLeads(data, c.slug),
+      messageCount: totals.messageCount,
+      uniqueActiveChatters: totals.uniqueActiveChatters,
+      groupsWithEntry: totals.groupsWithEntry,
+      groupCount: totals.groupCount,
+    };
+  });
 
-/** One GA4 figure across the trend window, oldest week first. */
-export function ga4Series(
-  data: DashboardData,
-  pick: (figures: Ga4Figures | null) => number | null,
-  weeks: string[] = data.weeks,
-): { week: string; value: number | null }[] {
-  return weeks.map((week) => ({ week, value: pick(ga4Week(data.imports, week)) }));
-}
-
-/** The three GA4 headline figures, in display order. */
-export const GA4_FIGURES: {
-  key: string;
-  label: string;
-  hint: string;
-  pick: (figures: Ga4Figures | null) => number | null;
-}[] = [
-  {
-    key: 'activeUsers',
-    label: 'Active users',
-    hint: 'GA4 · landing page · this week',
-    pick: (g) => g?.activeUsers ?? null,
-  },
-  {
-    key: 'newUsers',
-    label: 'New users',
-    hint: 'GA4 · landing page · this week',
-    pick: (g) => g?.newUsers ?? null,
-  },
-  {
-    key: 'sessions',
-    label: 'Sessions',
-    hint: 'GA4 · landing page · source/medium',
-    pick: (g) => g?.sessions ?? null,
-  },
-];
-
-/**
- * Community #2's Short.io figures for the displayed week — Short.io is
- * specifically Community #2's own link data, not a shared/generic source, so
- * this is never pooled with anything else.
- */
-export function communityShortio(
-  data: DashboardData,
-  community: CommunitySlug,
-  weekStart: string = data.displayWeek,
-): ShortioFigures | null {
-  return shortioWeek(data.imports, community, weekStart);
-}
-
-/** One Short.io figure across the trend window, oldest week first. */
-export function shortioSeries(
-  data: DashboardData,
-  community: CommunitySlug,
-  pick: (figures: ShortioFigures | null) => number | null,
-  weeks: string[] = data.weeks,
-): { week: string; value: number | null }[] {
-  return weeks.map((week) => ({
-    week,
-    value: pick(shortioWeek(data.imports, community, week)),
+  const groups: GroupReportLine[] = data.perGroup.map((m) => ({
+    group: m.group,
+    community: m.community,
+    messageCount: m.messageCount,
+    uniqueActiveChatters: m.uniqueActiveChatters,
+    activityLevel: m.activityLevel,
+    mainTopics: m.mainTopics,
   }));
+
+  const memberTotals = communities.map((c) => c.members).filter((v): v is number => v !== null);
+  const leadTotals = communities.map((c) => c.leads).filter((v): v is number => v !== null);
+
+  return {
+    communities,
+    groups,
+    totalMembers: memberTotals.length > 0 ? memberTotals.reduce((s, v) => s + v, 0) : null,
+    totalLeads: leadTotals.length > 0 ? leadTotals.reduce((s, v) => s + v, 0) : null,
+    instagramMembers: instagramMembers(data),
+    ga4: data.ga4.figures,
+    shortio: data.shortio.figures,
+  };
+}
+
+/**
+ * Write this period's numbers into its filed report.
+ *
+ * Called from every write path — an upload, a member count, a leads figure, an
+ * Instagram reading — rather than on page load, so a report's stored numbers
+ * always match its own inputs but reading the dashboard never writes to it.
+ */
+export async function refreshReport(period: ReportPeriod): Promise<void> {
+  const data = await loadDashboard(`${period.start}:${period.end}`);
+  await upsertReport(period, liveSnapshot(data));
+}
+
+/**
+ * Refresh every filed report, for something that invalidates all of them at
+ * once — wiping the import store, say. Returns how many were rewritten.
+ */
+export async function refreshAllReports(): Promise<number> {
+  const reports = await getReports();
+  // Sequential for the same reason as `refreshReportsFor` below: each refresh
+  // read-modify-writes the same reports document.
+  for (const report of reports) {
+    await refreshReport({ start: report.periodStart, end: report.periodEnd });
+  }
+  return reports.length;
+}
+
+/**
+ * Refresh every filed report a hand-entered figure could have changed.
+ *
+ * A number entered as of some date belongs to whichever report period covers
+ * that date — usually the active one, but not when a past report is being
+ * corrected. Both are refreshed, and sequentially: each `refreshReport` does
+ * its own read-modify-write of the same reports document, so running them
+ * concurrently would let one overwrite the other's record.
+ */
+export async function refreshReportsFor(enteredAt: string): Promise<void> {
+  const [active, reports] = await Promise.all([getActivePeriod(), getReports()]);
+  const covering = reports
+    .filter((r) => r.periodStart <= enteredAt && enteredAt <= r.periodEnd)
+    .map((r) => ({ start: r.periodStart, end: r.periodEnd }));
+
+  const periods = [active, ...covering].filter(
+    (period, index, all) => all.findIndex((p) => samePeriod(p, period)) === index,
+  );
+  for (const period of periods) await refreshReport(period);
 }

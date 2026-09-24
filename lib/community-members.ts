@@ -122,3 +122,34 @@ export function previousCommunityMemberEntry(
   const history = communityMemberHistory(entries, community);
   return history[history.length - 2] ?? null;
 }
+
+/**
+ * The total that was current at the end of a report period — the latest entry
+ * dated on or before it.
+ *
+ * This is what a report for a past range must use. Reading "the latest entry"
+ * instead would let September's count silently rewrite August's report the
+ * moment it was typed in, which would make the filed history meaningless.
+ */
+export function communityMembersAsOf(
+  entries: CommunityMemberEntry[],
+  community: CommunitySlug,
+  periodEnd: string,
+): CommunityMemberEntry | null {
+  const eligible = communityMemberHistory(entries, community).filter(
+    (e) => e.enteredAt <= periodEnd,
+  );
+  return eligible[eligible.length - 1] ?? null;
+}
+
+/** The total that was current before a report period began. */
+export function communityMembersBefore(
+  entries: CommunityMemberEntry[],
+  community: CommunitySlug,
+  periodStart: string,
+): CommunityMemberEntry | null {
+  const eligible = communityMemberHistory(entries, community).filter(
+    (e) => e.enteredAt < periodStart,
+  );
+  return eligible[eligible.length - 1] ?? null;
+}

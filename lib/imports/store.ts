@@ -3,6 +3,7 @@ import path from 'node:path';
 import type {
   AiSummary,
   CommunitySlug,
+  DailyRow,
   Ga4Figures,
   GroupSlug,
   ImportSource,
@@ -11,7 +12,7 @@ import type {
   WhatsappFigures,
 } from '../types';
 import { isCommunitySlug, isGroupSlug } from '../groups';
-import { parseISODate, weekStartOf } from '../weeks';
+import { parseISODate, weekEnd, weekStartOf } from '../weeks';
 import { isValidISODate } from '../period';
 import { readJsonObject, vercelBlobEnabled, writeJsonObject } from '../vercel-blob';
 
@@ -28,25 +29,36 @@ import { readJsonObject, vercelBlobEnabled, writeJsonObject } from '../vercel-bl
  *   - A local JSON file, `data/imports.json` — the zero-config default for
  *     `npm run dev`.
  *
- * Short.io/GA4 stay on the Monday-anchored week system (untouched — see
- * lib/weeks.ts); re-uploading the same export for the same week REPLACES
- * that week's figures. WhatsApp is keyed by its manually-entered
- * periodStart/periodEnd instead — re-filing the same range REPLACES it the
- * same way. The natural key differs by source — see the `ImportedFile` doc
- * comment in ../types.ts.
+ * Every source is keyed by the date range it covers, so re-uploading the same
+ * export for the same range REPLACES its figures rather than adding a second
+ * record. What differs between sources is only the scope alongside the range
+ * — a group for WhatsApp, a community for Short.io, nothing for GA4. See the
+ * `ImportedFile` doc comment in ../types.ts.
  */
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STORE_FILE = path.join(DATA_DIR, 'imports.json');
 const STORAGE_OBJECT = 'imports.json';
 
+/**
+ * Every upload's identity is its source, its scope, and the date range it
+ * covers — derived, never trusted from the stored row.
+ *
+ * Deriving it is what makes re-uploading replace rather than duplicate. It
+ * also quietly migrates the rows written before Short.io and GA4 moved onto
+ * the same date-range keying as WhatsApp: a legacy row keyed by its Monday
+ * is read as covering that Monday–Sunday week (see `normalizeImport`), so
+ * re-uploading that week now lands on the same id and replaces it.
+ */
+
 /** Short.io's natural key: it's community-scoped (currently Community #2 only). */
 export function importId(
   source: ImportSource,
   community: CommunitySlug,
-  weekStart: string,
+  periodStart: string,
+  periodEnd: string,
 ): string {
-  return `${source}:${community}:${weekStart}`;
+  return `${source}:${community}:${periodStart}:${periodEnd}`;
 }
 
 /** WhatsApp's natural key: per-group and per manually-filed date range. */
@@ -55,8 +67,21 @@ export function importIdForPeriod(group: GroupSlug, periodStart: string, periodE
 }
 
 /** GA4's natural key: landing-page traffic isn't scoped to a community at all. */
-export function importIdForGlobal(source: ImportSource, weekStart: string): string {
-  return `${source}:global:${weekStart}`;
+export function importIdForGlobal(
+  source: ImportSource,
+  periodStart: string,
+  periodEnd: string,
+): string {
+  return `${source}:global:${periodStart}:${periodEnd}`;
+}
+
+/** The id an upload must have, from its own fields. */
+function idFor(file: Omit<ImportedFile, 'id' | 'uploadedAt'>): string {
+  const start = file.periodStart!;
+  const end = file.periodEnd!;
+  if (file.source === 'whatsapp') return importIdForPeriod(file.group!, start, end);
+  if (file.source === 'ga4') return importIdForGlobal(file.source, start, end);
+  return importId(file.source, file.community!, start, end);
 }
 
 function isSource(value: unknown): value is ImportSource {
@@ -129,23 +154,28 @@ function normalizeImport(raw: Record<string, unknown>): ImportedFile | null {
   const group = isGroupSlug(raw.group) ? raw.group : undefined;
   if (raw.source === 'whatsapp' && !group) return null;
 
-  let weekStart: string | undefined;
-  let periodStart: string | undefined;
-  let periodEnd: string | undefined;
+  // Every source is now keyed by the date range it covers. Rows written
+  // before Short.io and GA4 moved onto that keying only have `weekStart`, so
+  // their Monday–Sunday week becomes their range — no migration step, and no
+  // silently dropped history.
+  const startRaw = String(raw.periodStart ?? '');
+  const endRaw = String(raw.periodEnd ?? '');
+  let periodStart: string;
+  let periodEnd: string;
 
-  if (raw.source === 'whatsapp') {
-    // Manually entered, kept exactly as filed — not snapped to any week.
-    const startRaw = String(raw.periodStart ?? '');
-    const endRaw = String(raw.periodEnd ?? '');
-    if (!isValidISODate(startRaw) || !isValidISODate(endRaw)) return null;
+  if (isValidISODate(startRaw) && isValidISODate(endRaw) && endRaw >= startRaw) {
     periodStart = startRaw;
     periodEnd = endRaw;
-  } else {
-    const weekRaw = String(raw.weekStart ?? '');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekRaw)) return null;
+  } else if (raw.source !== 'whatsapp' && /^\d{4}-\d{2}-\d{2}$/.test(String(raw.weekStart ?? ''))) {
     // Snap to the Monday, so a mid-week date can't create a second row.
-    weekStart = weekStartOf(parseISODate(weekRaw));
+    periodStart = weekStartOf(parseISODate(String(raw.weekStart)));
+    periodEnd = weekEnd(periodStart);
+  } else {
+    return null;
   }
+
+  // Kept for the Monday-anchored week series the trend charts still index by.
+  const weekStart = weekStartOf(parseISODate(periodStart));
 
   const notes = Array.isArray(raw.notes)
     ? raw.notes.map((n) => String(n ?? '')).filter((n) => n !== '')
@@ -190,15 +220,24 @@ function normalizeImport(raw: Record<string, unknown>): ImportedFile | null {
         }
       : undefined;
 
-  return {
-    id:
-      typeof raw.id === 'string' && raw.id
-        ? raw.id
-        : raw.source === 'whatsapp' && group && periodStart && periodEnd
-          ? importIdForPeriod(group, periodStart, periodEnd)
-          : raw.source === 'ga4'
-            ? importIdForGlobal(raw.source, weekStart!)
-            : importId(raw.source, community!, weekStart!),
+  const daily = Array.isArray(raw.daily)
+    ? raw.daily
+        .map((row) => {
+          const r = row as Record<string, unknown>;
+          const date = String(r.date ?? '');
+          if (!isValidISODate(date)) return null;
+          const valuesRaw = (r.values ?? {}) as Record<string, unknown>;
+          const values: Record<string, number> = {};
+          for (const [key, value] of Object.entries(valuesRaw)) {
+            const n = Number(value);
+            if (Number.isFinite(n)) values[key] = n;
+          }
+          return Object.keys(values).length > 0 ? { date, values } : null;
+        })
+        .filter((r): r is DailyRow => r !== null)
+    : undefined;
+
+  const base = {
     source: raw.source,
     community,
     group,
@@ -206,12 +245,21 @@ function normalizeImport(raw: Record<string, unknown>): ImportedFile | null {
     periodStart,
     periodEnd,
     filename: String(raw.filename ?? 'upload'),
-    uploadedAt: String(raw.uploadedAt ?? new Date().toISOString()),
     notes,
+    daily: daily && daily.length > 0 ? daily : undefined,
     shortio,
     ga4,
     whatsapp,
     aiSummary,
+  };
+
+  return {
+    ...base,
+    // Derived, not read back: see the note above `importId`. A stored id from
+    // the week-keyed era would otherwise keep a legacy row and its re-upload
+    // apart as two separate records for the same week.
+    id: idFor(base),
+    uploadedAt: String(raw.uploadedAt ?? new Date().toISOString()),
   };
 }
 
@@ -263,15 +311,9 @@ async function writeImports(files: ImportedFile[]): Promise<void> {
 }
 
 function withId(file: Omit<ImportedFile, 'id' | 'uploadedAt'>): ImportedFile {
-  const id =
-    file.source === 'whatsapp' && file.group && file.periodStart && file.periodEnd
-      ? importIdForPeriod(file.group, file.periodStart, file.periodEnd)
-      : file.source === 'ga4'
-        ? importIdForGlobal(file.source, file.weekStart!)
-        : importId(file.source, file.community!, file.weekStart!);
   return {
     ...file,
-    id,
+    id: idFor(file),
     uploadedAt: new Date().toISOString(),
   };
 }
@@ -320,20 +362,6 @@ export async function resetImports(): Promise<{ count: number }> {
 
 /* ---------------------------------------------------------------- selectors */
 
-/** The stored file for one source, community and week, if any. */
-export function findImport(
-  files: ImportedFile[],
-  source: ImportSource,
-  community: CommunitySlug,
-  weekStart: string,
-): ImportedFile | null {
-  return (
-    files.find(
-      (f) => f.source === source && f.community === community && f.weekStart === weekStart,
-    ) ?? null
-  );
-}
-
 /** Every filed period for one group, oldest first. */
 export function groupPeriods(files: ImportedFile[], group: GroupSlug): ImportedFile[] {
   return files
@@ -363,27 +391,19 @@ export function previousGroupPeriod(
 }
 
 /**
- * Community #2's Short.io figures for one week, or null when nothing's been
- * uploaded for it — never zero, so "not imported yet" stays distinguishable
- * from "genuinely no clicks". Still community-parameterized (rather than
- * hardcoded to community-2) so a second community could pick up Short.io
- * later without a signature change, but only Community #2 declares the
- * capability today — see lib/groups.ts.
+ * Every upload of one source, oldest covered range first — the input to
+ * lib/imports/resolve.ts, which decides which of them answers for a given
+ * report period.
+ *
+ * Figures for a period are never read straight off a matching row any more:
+ * a period may be answered by an overlapping export, by a re-slice of a wider
+ * one, or by carrying an earlier one forward, and only the resolver knows
+ * which. Reading a row directly here would lose that distinction, which is
+ * the one thing the panels have to show.
  */
-export function shortioWeek(
-  files: ImportedFile[],
-  community: CommunitySlug,
-  weekStart: string,
-) {
-  return findImport(files, 'shortio', community, weekStart)?.shortio ?? null;
+export function importsOfSource(files: ImportedFile[], source: ImportSource): ImportedFile[] {
+  return files
+    .filter((f) => f.source === source && f.periodStart && f.periodEnd)
+    .sort((a, b) => (a.periodEnd! < b.periodEnd! ? -1 : 1));
 }
 
-/** The stored GA4 file for one week, if any — landing-page traffic, no community. */
-export function findGa4Import(files: ImportedFile[], weekStart: string): ImportedFile | null {
-  return files.find((f) => f.source === 'ga4' && f.weekStart === weekStart) ?? null;
-}
-
-/** Landing-page GA4 figures for one week, or null when nothing's been uploaded for it. */
-export function ga4Week(files: ImportedFile[], weekStart: string): Ga4Figures | null {
-  return findGa4Import(files, weekStart)?.ga4 ?? null;
-}

@@ -27,17 +27,20 @@ export const dynamic = 'force-dynamic';
  */
 export default async function GroupPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ community: string; slug: string }>;
+  searchParams: Promise<{ period?: string }>;
 }) {
   const { community: communitySlug, slug } = await params;
+  const { period: periodParam } = await searchParams;
   const community = getCommunity(communitySlug);
   const group = getGroup(slug);
   // The group must exist AND belong to the community in the URL, so a mismatched
   // pair 404s rather than rendering a group under the wrong community's header.
   if (!community || !group || group.community !== community.slug) notFound();
 
-  const data = await loadDashboard();
+  const data = await loadDashboard(periodParam);
   const metrics = data.perGroup.find((m) => m.group === group.slug);
   if (!metrics) notFound();
 
@@ -58,9 +61,9 @@ export default async function GroupPage({
     value: m.messageCount,
   }));
 
-  const periodLabel = metrics.periodStart && metrics.periodEnd
-    ? formatDateRange(metrics.periodStart, metrics.periodEnd)
-    : null;
+  // The period the page is reporting on — not the group's own last upload,
+  // which may be an older range if nothing was filed for this one.
+  const periodLabel = formatDateRange(data.period.start, data.period.end);
 
   return (
     <>
@@ -151,9 +154,12 @@ export default async function GroupPage({
 
         <h2 className="sectionTitle">Import WhatsApp chat</h2>
         <WhatsappImportPanel
+          key={`wa-${data.activePeriod.start}-${data.activePeriod.end}`}
           group={group.slug}
           groupLabel={group.label}
+          community={community.slug}
           info={SOURCE_META.whatsapp}
+          period={data.activePeriod}
           existing={groupWhatsappImports}
         />
       </div>

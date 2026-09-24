@@ -24,10 +24,16 @@ export type GroupSlug =
   | 'usa-3'
   | 'australia-3'
   | 'canada-3'
-  | 'germany-3';
+  | 'germany-3'
+  // Community #4 — same five destinations again, distinct slugs.
+  | 'uk-4'
+  | 'usa-4'
+  | 'australia-4'
+  | 'canada-4'
+  | 'germany-4';
 
 /** Top-level communities. Each is its own report. */
-export type CommunitySlug = 'community-1' | 'community-2' | 'community-3';
+export type CommunitySlug = 'community-1' | 'community-2' | 'community-3' | 'community-4';
 
 /**
  * The three file-import sources. Each corresponds to one export the user
@@ -201,11 +207,38 @@ export interface ImportedFile {
    * opening it.
    */
   notes: string[];
+  /**
+   * Short.io/GA4 only, and only when the export carried a day-by-day
+   * breakdown: the days it covers, oldest first. Lets a later report re-slice
+   * this export instead of demanding a fresh upload — see
+   * lib/imports/resolve.ts.
+   */
+  daily?: DailyRow[];
   shortio?: ShortioFigures;
   ga4?: Ga4Figures;
   whatsapp?: WhatsappFigures;
   /** Set only for the most recent week of a WhatsApp upload — see the imports API route. */
   aiSummary?: AiSummary;
+}
+
+/**
+ * One day's rows, when an export carries a day-by-day breakdown alongside its
+ * headline totals.
+ *
+ * This is what makes "reuse the last export for the current period" honest
+ * rather than a guess: with a daily series, an export covering a wider window
+ * can be re-sliced down to exactly the days a report asks for. Without one,
+ * the totals can only be carried forward whole and labelled as such — see
+ * lib/imports/resolve.ts.
+ *
+ * `values` is keyed by the same names as the figures it feeds:
+ * `activeUsers`/`newUsers`/`sessions` for GA4, `clicks` for Short.io. A day
+ * missing a metric simply omits the key, so a gap never reads as a zero.
+ */
+export interface DailyRow {
+  /** YYYY-MM-DD. */
+  date: string;
+  values: Record<string, number>;
 }
 
 /** Clicks on one tracked link, from Short.io's "Top links" sheet. */

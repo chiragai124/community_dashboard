@@ -1636,3 +1636,200 @@ input[type='file']:hover:not(:disabled) {
   border-radius: 2px 4px 4px 2px;
   min-width: 3px;
 }
+
+/* --------------------------------------------------------------- period bar */
+
+/*
+ * The report-period control: which period is shown, and (behind a toggle)
+ * which period new data is filed under. Sits directly under the page header,
+ * above everything it governs.
+ */
+.periodBar {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-card);
+}
+
+/*
+ * Viewing a past report is a different mode, not a different page, so it gets
+ * an unmissable edge rather than a quiet label. Reading last month's figures
+ * while believing they're this month's is the one mistake this control exists
+ * to prevent.
+ */
+.periodBar--past {
+  border-left: 3px solid var(--warn);
+  background: var(--warn-wash);
+}
+
+.periodBar__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.periodBar__note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}
+
+.periodBar__edit {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.field--inline {
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+
+/* ----------------------------------------------------------------- dropzone */
+
+/* Multi-file drop target for a whole community's chat exports. */
+.dropzone {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: 22px 16px;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.dropzone--over {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.dropzone--busy {
+  opacity: 0.6;
+}
+
+/*
+ * The input is visually hidden but still focusable and still in the tab order
+ * — `display: none` would take it out of both, leaving the label as the only
+ * way in and no way at all by keyboard.
+ */
+.dropzone__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dropzone__label {
+  display: inline-block;
+  font-size: 13.5px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.dropzone__label strong {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.dropzone__input:focus-visible + .dropzone__label {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* ------------------------------------------------------- landing page & WADL */
+
+.wadl {
+  margin-top: 26px;
+}
+
+.wadl__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.wadl__period {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Two panels side by side, never merged. Website traffic and link clicks
+ * count different things about different populations; putting them on shared
+ * axes would imply a relationship the numbers can't carry.
+ */
+.wadl__panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .wadl__panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.wadl__panel {
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------- misc bits */
+
+table.data--compact th,
+table.data--compact td {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+table.data tfoot th,
+table.data tfoot td {
+  border-top: 1.5px solid var(--line-strong);
+  border-bottom: 0;
+  font-weight: 600;
+}
+
+/*
+ * A stand-in figure, or a date that won't land where the reader expects.
+ * Unlike --ok and --err, which are transient replies to an action, this is a
+ * standing caveat attached to a number, so it gets a box rather than a colour.
+ */
+.formMsg--warn {
+  display: block;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-wash);
+  border: 1px solid #e6d3a3;
+  color: #7a5a06;
+  line-height: 1.45;
+}
+
+/* An inline action that reads as prose, e.g. "Correct this date". */
+.linkBtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkBtn:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
