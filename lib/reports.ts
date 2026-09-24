@@ -225,14 +225,18 @@ function normalizeReport(raw: unknown): FiledReport | null {
   };
 }
 
-/** Oldest first, by the date the period ends — the order a history reads in. */
+/**
+ * Oldest first, by the date the period *starts* — the same ordering
+ * `previousReport` uses, so "the latest report" and "the one before this one"
+ * can never disagree about which way round two touching periods go.
+ */
 function sortReports(reports: FiledReport[]): FiledReport[] {
   return [...reports].sort((a, b) =>
-    a.periodEnd < b.periodEnd
+    a.periodStart < b.periodStart
       ? -1
-      : a.periodEnd > b.periodEnd
+      : a.periodStart > b.periodStart
         ? 1
-        : a.periodStart < b.periodStart
+        : a.periodEnd < b.periodEnd
           ? -1
           : 1,
   );
@@ -309,18 +313,23 @@ export function findReport(reports: FiledReport[], period: ReportPeriod): FiledR
 
 /**
  * The report a new one is measured against: the most recent filed report that
- * ended before this period began.
+ * *started* before this period started.
  *
- * "Ended before it began" rather than merely "filed earlier" is what keeps the
- * comparison honest when a period is re-filed or back-filled out of order —
- * the baseline is always the chronologically previous report, not whichever
- * one happened to be saved last.
+ * Started, not ended. This report runs Wednesday to Wednesday, so consecutive
+ * periods share a date — 16–23 Sep follows 9–16 Sep. An "ended before this
+ * began" rule reads that shared date as an overlap and finds no baseline at
+ * all, which silently blanked every comparison column on the report. Ordering
+ * by start date is unambiguous whether or not periods touch, and still picks
+ * the chronologically previous report when one is re-filed or back-filled out
+ * of order.
  */
 export function previousReport(
   reports: FiledReport[],
   period: ReportPeriod,
 ): FiledReport | null {
-  const earlier = reports.filter((r) => r.periodEnd < period.start);
+  const earlier = reports
+    .filter((r) => r.periodStart < period.start)
+    .sort((a, b) => (a.periodStart < b.periodStart ? -1 : 1));
   return earlier[earlier.length - 1] ?? null;
 }
 

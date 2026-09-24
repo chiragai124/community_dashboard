@@ -152,17 +152,26 @@ Three figures, none of which any export contains:
 - **The Instagram broadcast channel's member count**, plus a one-time
   creation date.
 
-Each is an append-only dated log ([`lib/entry-log.ts`](lib/entry-log.ts)),
-so a past report keeps the figure that was true when it was filed rather
-than silently adopting whatever has been entered since. The as-of date
-defaults to the end of the period being reported on, not to today — entering
-Monday's numbers on Wednesday should file them against Monday's report.
+Each is filed **against the report period you selected**, not against the
+date you happened to type it on ([`lib/entry-log.ts`](lib/entry-log.ts)), so
+a past report keeps the figures that were true for it.
+
+There is deliberately no "as of" date field. This report runs Wednesday to
+Wednesday, so consecutive periods share a date — 16 Sep both opens 16–23 Sep
+and closes 9–16 Sep — and a single date therefore names two reports. Working
+the period out from one was ambiguous in exactly the way that matters: leads
+got counted into both reports, and "vs. last report" found no baseline at
+all and silently blanked every comparison. The range is explicit instead, and
+the form says which range it is filing against.
 
 **Members are a level, leads are a flow.** A member total carries forward:
 last month's reading is still the best answer until a new one arrives. A
 leads figure does not — carrying it forward would report the same leads
 again in every subsequent report, inflating the funnel indefinitely. A
 period with no leads entered shows none, and says so.
+
+Gains render green and losses red, and the message bars are sorted by
+volume, matching the weekly report this dashboard replaces.
 
 ## The external calls: Groq
 

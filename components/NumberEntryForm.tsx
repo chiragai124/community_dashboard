@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDateRange } from '@/lib/period';
 
@@ -8,15 +8,17 @@ import { formatDateRange } from '@/lib/period';
  * The one form for every hand-entered number on the dashboard: total members,
  * leads added, the Instagram channel's member count.
  *
- * They are the same interaction — a number, the date it's true as of, save —
- * so they are one component rather than three that drift apart. Each saves to
- * its own endpoint and appends to its own dated history.
+ * They are the same interaction — a number, save — so they are one component
+ * rather than three that drift apart. Each saves to its own endpoint and
+ * appends to its own history.
  *
- * The date defaults to the end of the period being reported on, not to today.
- * That is the difference between a figure landing in the report it belongs to
- * and landing in the next one: entering Monday's numbers on Wednesday should
- * file them against Monday's report, and defaulting to today would quietly
- * not.
+ * **There is no date field.** The figure is filed against the report period
+ * selected at the top of the page, and the form says which that is. An
+ * earlier version asked for an "as of" date and worked out the period from
+ * it, which could not work on a Wednesday-to-Wednesday cadence: 16 Sep both
+ * opens 16–23 Sep and closes 9–16 Sep, so the same date named two reports.
+ * Filing against the range you picked is unambiguous, and it is one fewer
+ * field to get wrong every week.
  */
 export function NumberEntryForm({
   subtitle,
@@ -35,21 +37,28 @@ export function NumberEntryForm({
   valueField: string;
   /** Anything else the endpoint needs, e.g. `{ community }`. */
   extraPayload?: Record<string, string>;
+  /** What was entered for this exact period, or null — not a carried-forward figure. */
   currentValue: number | null;
-  /** The period being reported on — seeds the as-of date. */
+  /** The report period this figure is filed against. */
   period: { start: string; end: string };
   placeholder?: string;
 }) {
   const router = useRouter();
   const [value, setValue] = useState(currentValue !== null ? String(currentValue) : '');
-  const [date, setDate] = useState(period.end);
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
   const working = busy || isPending;
-  const outsidePeriod = date < period.start || date > period.end;
+
+  // Re-seed when the period (or its stored figure) changes, so switching
+  // reports shows that report's number rather than the last one typed.
+  useEffect(() => {
+    setValue(currentValue !== null ? String(currentValue) : '');
+    setOk(false);
+    setError(null);
+  }, [currentValue, period.start, period.end]);
 
   async function save() {
     const parsed = Number(value);
@@ -64,7 +73,12 @@ export function NumberEntryForm({
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...extraPayload, [valueField]: parsed, enteredAt: date }),
+        body: JSON.stringify({
+          ...extraPayload,
+          [valueField]: parsed,
+          periodStart: period.start,
+          periodEnd: period.end,
+        }),
       });
       const payload = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(payload.error ?? `Save failed (${res.status})`);
@@ -80,45 +94,29 @@ export function NumberEntryForm({
   return (
     <section className="card">
       <div className="card__head">
-        {/* No title: every use of this form sits directly under a section
-            heading that already names the figure being entered. */}
         <div className="card__sub">{subtitle}</div>
       </div>
       <div className="card__body">
-        <div className="impRow__controls">
-          <label className="field">
-            <span className="field__label">{valueLabel}</span>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              disabled={working}
-              placeholder={placeholder ?? (currentValue !== null ? String(currentValue) : '')}
-            />
-          </label>
-          <label className="field">
-            <span className="field__label">As of date</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              disabled={working}
-            />
-          </label>
-        </div>
-
-        {/* A date outside the report period is legitimate — correcting an
-            older report, say — but it is much more often a slip, and the
-            figure would silently land in a different report than the one on
-            screen. */}
-        {outsidePeriod ? (
-          <p className="formMsg formMsg--warn" role="status">
-            That date is outside this report&rsquo;s period (
-            {formatDateRange(period.start, period.end)}), so this figure won&rsquo;t appear in it.
-          </p>
-        ) : null}
+        <label className="field">
+          <span className="field__label">
+            {valueLabel}{' '}
+            <span className="field__hint">
+              for {formatDateRange(period.start, period.end)}
+            </span>
+          </span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={working}
+            placeholder={placeholder ?? ''}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void save();
+            }}
+          />
+        </label>
 
         <div className="row" style={{ marginTop: 12 }}>
           <button
@@ -135,9 +133,13 @@ export function NumberEntryForm({
             </span>
           ) : ok ? (
             <span className="formMsg formMsg--ok" role="status">
-              Saved.
+              Saved for {formatDateRange(period.start, period.end)}.
             </span>
-          ) : null}
+          ) : (
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Change the range with the report period control at the top of the page.
+            </span>
+          )}
         </div>
       </div>
     </section>

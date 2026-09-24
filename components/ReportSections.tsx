@@ -149,7 +149,7 @@ export function InstagramSection({
         <div>
           <div className="card__sub">
             {createdOn
-              ? `Created ${createdOn}${weeks !== null ? ` · running for ${weeks} week${weeks === 1 ? '' : 's'}` : ''}`
+              ? `Created ${createdOn}${weeks !== null && weeks >= 1 ? ` · running for ${weeks} week${weeks === 1 ? '' : 's'}` : ''}`
               : 'Creation date not set yet'}
           </div>
         </div>
@@ -257,15 +257,25 @@ export function LeadsFunnel({
                       ) : null}
                     </span>
                   </div>
+                  {/* A community with nothing entered draws an empty track.
+                      The 2% minimum width exists so a real zero is still
+                      visible as a bar, but applying it to "not entered" made
+                      a missing figure look like a small one. */}
                   <div
                     className="hbar__track"
                     role="img"
-                    aria-label={`${row.community.label}: ${formatExact(row.current)} leads`}
+                    aria-label={
+                      row.current === null
+                        ? `${row.community.label}: no figure entered for this period`
+                        : `${row.community.label}: ${formatExact(row.current)} leads`
+                    }
                   >
-                    <div
-                      className="hbar__fill"
-                      style={{ width: `${Math.max(((row.current ?? 0) / max) * 100, 2)}%` }}
-                    />
+                    {row.current !== null ? (
+                      <div
+                        className="hbar__fill"
+                        style={{ width: `${Math.max((row.current / max) * 100, 2)}%` }}
+                      />
+                    ) : null}
                   </div>
                 </div>
               ))}

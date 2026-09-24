@@ -9,8 +9,10 @@ import { GA4_FIGURES } from '@/lib/dashboard';
 
 /**
  * Landing page & WADL as a dashboard rather than a list of numbers: two
- * panels side by side under one date-range header, website traffic on the
- * left and Community #2's link clicks on the right.
+ * panels side by side under one date-range header, Community #2's
+ * scholarship-link clicks on the left and website traffic on the right —
+ * the order the weekly report itself uses, leading with the links because
+ * that is where most of the measurable movement comes from.
  *
  * They sit together because they are read together — traffic arrives on the
  * landing page and leaves through a tracked link — but they are kept in
@@ -99,69 +101,13 @@ export function LandingWadlDashboard({
       {showHeading ? (
         <div className="wadl__head">
           <h2 className="sectionTitle" style={{ margin: 0 }}>
-            Landing page &amp; WADL
+            Scholarship leads (Short.io) &amp; landing page (GA4)
           </h2>
           <span className="wadl__period">{formatDateRange(period.start, period.end)}</span>
         </div>
       ) : null}
 
       <div className="wadl__panels">
-        {/* ------------------------------------------------------- GA4 --- */}
-        <section className="card wadl__panel">
-          <div className="card__head">
-            <div>
-              <div className="card__title">Website traffic</div>
-              <div className="card__sub">
-                GA4 · the landing page, not either WhatsApp community
-              </div>
-            </div>
-          </div>
-          <div className="card__body">
-            {ga4.figures === null ? (
-              <div className="emptyState">
-                No GA4 snapshot has been uploaded yet. Import one to fill this panel.
-              </div>
-            ) : (
-              <>
-                <div className="grid grid--stats">
-                  {ga4Values.map((figure) => (
-                    <StatCard
-                      key={figure.key}
-                      label={figure.label}
-                      value={formatExact(figure.value)}
-                      delta={figure.delta}
-                      deltaSuffix={deltaSuffix}
-                      hint={figure.delta === null ? figure.hint : undefined}
-                    />
-                  ))}
-                </div>
-
-                {ga4HasTrend ? (
-                  <div style={{ marginTop: 16 }}>
-                    <MultiGroupTrend
-                      rows={ga4Rows}
-                      series={GA4_FIGURES.map((f) => ({ key: f.key, label: f.label }))}
-                      metricLabel="Landing page"
-                      initialFocus="sessions"
-                      height={240}
-                    />
-                    <p className="chartNote">
-                      One point per filed report, oldest first. Pick a metric in the legend to bring
-                      it forward.
-                    </p>
-                  </div>
-                ) : (
-                  <p className="chartNote">
-                    The trend line appears once a second report has been filed.
-                  </p>
-                )}
-
-                <Provenance resolved={ga4} />
-              </>
-            )}
-          </div>
-        </section>
-
         {/* -------------------------------------------------- Short.io --- */}
         <section className="card wadl__panel">
           <div className="card__head">
@@ -216,6 +162,62 @@ export function LandingWadlDashboard({
                     This export had no per-link breakdown, so only the total is shown.
                   </p>
                 )}
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* ------------------------------------------------------- GA4 --- */}
+        <section className="card wadl__panel">
+          <div className="card__head">
+            <div>
+              <div className="card__title">Website traffic</div>
+              <div className="card__sub">
+                GA4 · the landing page, not either WhatsApp community
+              </div>
+            </div>
+          </div>
+          <div className="card__body">
+            {ga4.figures === null ? (
+              <div className="emptyState">
+                No GA4 snapshot has been uploaded yet. Import one to fill this panel.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid--stats">
+                  {ga4Values.map((figure) => (
+                    <StatCard
+                      key={figure.key}
+                      label={figure.label}
+                      value={formatExact(figure.value)}
+                      delta={figure.delta}
+                      deltaSuffix={deltaSuffix}
+                      hint={figure.delta === null ? figure.hint : undefined}
+                    />
+                  ))}
+                </div>
+
+                {ga4HasTrend ? (
+                  <div style={{ marginTop: 16 }}>
+                    <MultiGroupTrend
+                      rows={ga4Rows}
+                      series={GA4_FIGURES.map((f) => ({ key: f.key, label: f.label }))}
+                      metricLabel="Landing page"
+                      initialFocus="sessions"
+                      height={240}
+                    />
+                    <p className="chartNote">
+                      One point per filed report, oldest first. Pick a metric in the legend to bring
+                      it forward.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="chartNote">
+                    The trend line appears once a second report has been filed.
+                  </p>
+                )}
+
+                <Provenance resolved={ga4} />
               </>
             )}
           </div>

@@ -2,7 +2,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { isValidISODate } from './period';
 import { readJsonObject, vercelBlobEnabled, writeJsonObject } from './vercel-blob';
-import { createEntryLog, entryAsOf, entryBefore, type LogEntry } from './entry-log';
+import { createEntryLog, entryForPeriod, levelForPeriod, type LogEntry } from './entry-log';
+import type { ReportPeriod } from './reports';
 
 /**
  * The Instagram broadcast channel: when it was created, and how many members
@@ -80,28 +81,31 @@ export async function saveInstagramChannel(createdOn: string): Promise<Instagram
 /** Every member-count reading, oldest first. */
 export const getInstagramMemberEntries = log.getEntries;
 
-/** Record the channel's member count as of `enteredAt`. */
+/** Record the channel's member count for a report period. */
 export function saveInstagramMemberEntry(
   members: number,
-  enteredAt: string,
+  period: ReportPeriod,
 ): Promise<InstagramMemberEntry> {
-  return log.saveEntry(INSTAGRAM_SCOPE, members, enteredAt);
+  return log.saveEntry(INSTAGRAM_SCOPE, members, period);
 }
 
-/** The count current at the end of a report period. */
-export function instagramMembersAsOf(
+/** The count entered for exactly this period, or null — what the form pre-fills with. */
+export function instagramMembersEnteredFor(
   entries: InstagramMemberEntry[],
-  periodEnd: string,
+  period: ReportPeriod,
 ): InstagramMemberEntry | null {
-  return entryAsOf(entries, INSTAGRAM_SCOPE, periodEnd);
+  return entryForPeriod(entries, INSTAGRAM_SCOPE, period);
 }
 
-/** The count current before a report period began — the previous report's figure. */
-export function instagramMembersBefore(
+/**
+ * The count this period reports. A level like the community member totals, so
+ * an earlier reading carries forward until a newer one is entered.
+ */
+export function instagramMembersFor(
   entries: InstagramMemberEntry[],
-  periodStart: string,
+  period: ReportPeriod,
 ): InstagramMemberEntry | null {
-  return entryBefore(entries, INSTAGRAM_SCOPE, periodStart);
+  return levelForPeriod(entries, INSTAGRAM_SCOPE, period);
 }
 
 /**

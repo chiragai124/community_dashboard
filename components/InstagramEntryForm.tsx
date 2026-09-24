@@ -1,16 +1,18 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDateRange } from '@/lib/period';
 
 /**
  * The Instagram broadcast channel's two manual inputs.
  *
- * The member count is a reading taken every report; the creation date is set
- * once. So the creation field only appears while it is unset, plus behind a
- * "correct it" toggle after — a standing value that sits in the form every
- * week is a standing invitation to change it by accident.
+ * The member count is a reading filed against the report period, exactly like
+ * the other manual figures (see NumberEntryForm on why there is no "as of"
+ * date). The creation date is a standing value set once, so that field only
+ * appears while it is unset, plus behind a "correct it" toggle after — a
+ * standing value sitting in the form every week is a standing invitation to
+ * change it by accident.
  *
  * Not the shared NumberEntryForm, because of that second field: folding an
  * optional one-time date into the generic form would complicate every other
@@ -27,7 +29,6 @@ export function InstagramEntryForm({
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(currentMembers !== null ? String(currentMembers) : '');
-  const [date, setDate] = useState(period.end);
   const [created, setCreated] = useState(createdOn ?? '');
   const [editingCreated, setEditingCreated] = useState(createdOn === null);
   const [busy, setBusy] = useState(false);
@@ -36,7 +37,14 @@ export function InstagramEntryForm({
   const [ok, setOk] = useState(false);
 
   const working = busy || isPending;
-  const outsidePeriod = date < period.start || date > period.end;
+
+  // Re-seed when the period changes, so switching reports shows that
+  // report's count rather than the last one typed.
+  useEffect(() => {
+    setMembers(currentMembers !== null ? String(currentMembers) : '');
+    setOk(false);
+    setError(null);
+  }, [currentMembers, period.start, period.end]);
 
   async function save() {
     const parsed = Number(members);
@@ -59,7 +67,7 @@ export function InstagramEntryForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...(wantsMembers ? { members: parsed, enteredAt: date } : {}),
+          ...(wantsMembers ? { members: parsed, periodStart: period.start, periodEnd: period.end } : {}),
           ...(wantsCreated ? { createdOn: created } : {}),
         }),
       });
@@ -84,29 +92,21 @@ export function InstagramEntryForm({
         </div>
       </div>
       <div className="card__body">
-        <div className="impRow__controls">
-          <label className="field">
-            <span className="field__label">Current member count</span>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={members}
-              onChange={(e) => setMembers(e.target.value)}
-              disabled={working}
-              placeholder={currentMembers !== null ? String(currentMembers) : ''}
-            />
-          </label>
-          <label className="field">
-            <span className="field__label">As of date</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              disabled={working}
-            />
-          </label>
-        </div>
+        <label className="field">
+          <span className="field__label">
+            Member count{' '}
+            <span className="field__hint">for {formatDateRange(period.start, period.end)}</span>
+          </span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={members}
+            onChange={(e) => setMembers(e.target.value)}
+            disabled={working}
+            placeholder={currentMembers !== null ? String(currentMembers) : ''}
+          />
+        </label>
 
         {editingCreated ? (
           <label className="field" style={{ marginTop: 10 }}>
@@ -135,13 +135,6 @@ export function InstagramEntryForm({
           </p>
         )}
 
-        {outsidePeriod && members.trim() !== '' ? (
-          <p className="formMsg formMsg--warn" role="status">
-            That date is outside this report&rsquo;s period (
-            {formatDateRange(period.start, period.end)}), so this count won&rsquo;t appear in it.
-          </p>
-        ) : null}
-
         <div className="row" style={{ marginTop: 12 }}>
           <button
             type="button"
@@ -157,7 +150,7 @@ export function InstagramEntryForm({
             </span>
           ) : ok ? (
             <span className="formMsg formMsg--ok" role="status">
-              Saved.
+              Saved for {formatDateRange(period.start, period.end)}.
             </span>
           ) : null}
         </div>

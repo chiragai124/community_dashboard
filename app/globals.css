@@ -558,12 +558,22 @@ button {
   font-weight: 600;
 }
 
+/*
+ * Deltas are coloured by valence, not by the brand accent: a gain reads
+ * green, a loss red, no change neutral. The accent is reserved for "this is
+ * the figure to look at", which is a different claim from "this went up" —
+ * and rendering a drop in the same muted grey as no-change buried exactly the
+ * thing a weekly report exists to surface.
+ */
 .delta--up {
-  color: var(--accent-ink);
+  color: var(--good);
 }
 
-.delta--flat,
 .delta--down {
+  color: var(--bad);
+}
+
+.delta--flat {
   color: var(--ink-secondary);
 }
 
@@ -1044,6 +1054,16 @@ table.data tbody tr:last-child td {
   border-radius: 999px;
   background: var(--surface-sunken);
   color: var(--ink-secondary);
+}
+
+.callout--urgent {
+  border-color: #f0b0a8;
+  background: var(--bad-wash);
+  border-left-color: var(--bad);
+}
+
+.callout--urgent .callout__tag {
+  background: var(--bad);
 }
 
 .callout--good .callout__tag {
