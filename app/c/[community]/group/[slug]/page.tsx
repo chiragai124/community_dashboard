@@ -12,6 +12,7 @@ import { SOURCE_META } from '@/lib/imports';
 import { groupPeriodSeries, loadDashboard } from '@/lib/dashboard';
 import { formatExact } from '@/lib/metrics';
 import { formatDateRange, formatShortDate } from '@/lib/period';
+import { blobAccess, vercelBlobEnabled } from '@/lib/vercel-blob';
 
 // Every figure here is read at request time — nothing is prerendered.
 export const dynamic = 'force-dynamic';
@@ -182,6 +183,7 @@ export default async function GroupPage({
           info={SOURCE_META.whatsapp}
           period={data.activePeriod}
           existing={groupWhatsappImports}
+          blobAccess={vercelBlobEnabled() ? blobAccess() : null}
         />
       </div>
     </>

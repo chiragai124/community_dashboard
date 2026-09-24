@@ -1,4 +1,4 @@
-import { get, put } from '@vercel/blob';
+import { del, get, put } from '@vercel/blob';
 
 /**
  * Vercel Blob as the persistence layer for this app's small JSON stores
@@ -68,4 +68,53 @@ export async function writeJsonObject(pathname: string, data: unknown): Promise<
     addRandomSuffix: false,
     allowOverwrite: true,
   });
+}
+
+/* ------------------------------------------------- transient chat uploads -- */
+
+/**
+ * Where a chat export lands on its way through, and nothing else.
+ *
+ * A with-media WhatsApp export is far larger than a serverless platform will
+ * accept as a request body (Vercel caps it at a few MB), so the browser
+ * uploads it straight to Blob storage and the server reads it back from
+ * there. That is the only reason these bytes exist in storage at all.
+ *
+ * They are deleted in the same request that parses them — see
+ * `withTransientBlob`. The prefix keeps them unmistakably separate from the
+ * small JSON documents this app actually persists, so anything left under it
+ * is a failed upload and safe to remove.
+ */
+export const TRANSIENT_UPLOAD_PREFIX = 'transient-uploads/';
+
+/** The access level the Blob store was created with; client uploads must match. */
+export function blobAccess(): 'public' | 'private' {
+  return ACCESS;
+}
+
+/**
+ * Read a client-uploaded export, hand it to `parse`, and delete it — whether
+ * or not parsing succeeded.
+ *
+ * The delete is in a `finally` on purpose. A chat export holds real names,
+ * phone numbers and message text; a parse failure is exactly when it would
+ * otherwise be left behind, and a malformed upload is no reason to keep
+ * someone's conversation in storage.
+ */
+export async function withTransientBlob<T>(
+  urlOrPathname: string,
+  parse: (bytes: Buffer) => Promise<T> | T,
+): Promise<T> {
+  try {
+    const result = await get(urlOrPathname, { access: ACCESS, useCache: false });
+    if (!result || result.statusCode !== 200) {
+      throw new Error('That upload could not be read back from storage.');
+    }
+    const bytes = Buffer.from(await new Response(result.stream).arrayBuffer());
+    return await parse(bytes);
+  } finally {
+    // Best-effort: a failed delete must not mask a parse error, and the
+    // prefix above makes an orphan identifiable if one ever survives.
+    await del(urlOrPathname).catch(() => undefined);
+  }
 }
