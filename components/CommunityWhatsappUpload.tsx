@@ -8,6 +8,7 @@ import { DateRangeFields } from '@/components/DateRangeFields';
 import { formatDateRange } from '@/lib/period';
 import { formatRelativeTime } from '@/lib/metrics';
 import { singularize } from '@/lib/groups';
+import { buildWhatsappUploadBody, type UploadProgress } from '@/lib/client-upload';
 
 /**
  * One upload area for a whole community: drop in every group's chat export at
@@ -56,6 +57,7 @@ export function CommunityWhatsappUpload({
   info,
   period,
   existing,
+  blobAccess,
 }: {
   community: CommunitySlug;
   communityLabel: string;
@@ -66,6 +68,12 @@ export function CommunityWhatsappUpload({
   period: { start: string; end: string };
   /** Every WhatsApp import stored for this community, any period. */
   existing: ImportedFile[];
+  /**
+   * The Blob store's access level, or null when Blob storage isn't
+   * configured. When set, files go browser → Blob directly instead of
+   * through the request body — see lib/client-upload.ts.
+   */
+  blobAccess: 'public' | 'private' | null;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -78,6 +86,7 @@ export function CommunityWhatsappUpload({
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<BatchResponse | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
 
   const working = busy || isPending;
   const groupNounSingular = singularize(groupNoun);
@@ -149,13 +158,16 @@ export function CommunityWhatsappUpload({
     setBusy(true);
     setError(null);
     setResponse(null);
+    setProgress(null);
     try {
-      const body = new FormData();
-      body.set('source', 'whatsapp');
-      body.set('community', community);
-      body.set('periodStart', periodStart);
-      body.set('periodEnd', periodEnd);
-      for (const file of picked) body.append('file', file);
+      const body = await buildWhatsappUploadBody({
+        files: picked,
+        community,
+        period: { start: periodStart, end: periodEnd },
+        blobAccess,
+        onProgress: setProgress,
+      });
+      setProgress(null);
 
       const res = await fetch('/api/imports', { method: 'POST', body });
       const payload = (await res.json().catch(() => ({}))) as BatchResponse;
@@ -188,6 +200,7 @@ export function CommunityWhatsappUpload({
       }
     } finally {
       setBusy(false);
+      setProgress(null);
       if (fileInput.current) fileInput.current.value = '';
     }
   }
@@ -303,10 +316,14 @@ export function CommunityWhatsappUpload({
           {working ? (
             <p className="impRow__status impRow__status--busy" role="status" aria-live="polite">
               <span className="spinner" aria-hidden="true" />
-              {busy
-                ? `Reading the exports and building this report${elapsedSec > 0 ? ` — ${elapsedSec}s` : ''}…`
-                : 'Finishing up…'}
-              {elapsedSec > 20 ? ' A full batch can take a minute or two — this is still working.' : ''}
+              {progress
+                ? `Uploading ${progress.filename} (${progress.fileIndex} of ${progress.fileCount}) — ${Math.round(progress.percentage)}%`
+                : busy
+                  ? `Reading the exports and building this report${elapsedSec > 0 ? ` — ${elapsedSec}s` : ''}…`
+                  : 'Finishing up…'}
+              {!progress && elapsedSec > 20
+                ? ' A full batch can take a minute or two — this is still working.'
+                : ''}
             </p>
           ) : null}
 

@@ -8,6 +8,7 @@ import { DateRangeFields } from '@/components/DateRangeFields';
 import { formatRelativeTime } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { splitNotes } from '@/lib/notes';
+import { buildWhatsappUploadBody, type UploadProgress } from '@/lib/client-upload';
 
 /**
  * The WhatsApp upload control for one group on its own.
@@ -29,6 +30,7 @@ export function WhatsappImportPanel({
   info,
   period,
   existing,
+  blobAccess,
 }: {
   group: GroupSlug;
   groupLabel: string;
@@ -38,6 +40,8 @@ export function WhatsappImportPanel({
   period: { start: string; end: string };
   /** Every period stored for this group, any freshness. */
   existing: ImportedFile[];
+  /** The Blob store's access level, or null when it isn't configured. */
+  blobAccess: 'public' | 'private' | null;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -56,6 +60,7 @@ export function WhatsappImportPanel({
 
   const working = busy || isPending;
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
 
   // Track the reporting period without remounting — same reason as
   // CommunityWhatsappUpload: an upload here sets the period, and being keyed
@@ -93,15 +98,17 @@ export function WhatsappImportPanel({
     setError(null);
     setResult(null);
     try {
-      const body = new FormData();
-      body.set('file', file);
-      body.set('source', 'whatsapp');
-      body.set('community', community);
-      // Pinned, not detected: this panel exists precisely for the export that
-      // detection couldn't place.
-      body.set('group', group);
-      body.set('periodStart', periodStart);
-      body.set('periodEnd', periodEnd);
+      const body = await buildWhatsappUploadBody({
+        files: [file],
+        community,
+        period: { start: periodStart, end: periodEnd },
+        // Pinned, not detected: this panel exists precisely for the export
+        // that detection couldn't place.
+        group,
+        blobAccess,
+        onProgress: setProgress,
+      });
+      setProgress(null);
 
       const res = await fetch('/api/imports', { method: 'POST', body });
       const payload = (await res.json().catch(() => ({}))) as {
@@ -152,6 +159,7 @@ export function WhatsappImportPanel({
       }
     } finally {
       setBusy(false);
+      setProgress(null);
       // Clear the picker so re-selecting the same filename still fires onChange.
       if (fileInput.current) fileInput.current.value = '';
     }
@@ -216,9 +224,11 @@ export function WhatsappImportPanel({
           {working ? (
             <p className="impRow__status impRow__status--busy" role="status" aria-live="polite">
               <span className="spinner" aria-hidden="true" />
-              {busy
-                ? `Reading the export and generating this report${elapsedSec > 0 ? ` — ${elapsedSec}s` : ''}…`
-                : 'Finishing up…'}
+              {progress
+                ? `Uploading ${progress.filename} — ${Math.round(progress.percentage)}%`
+                : busy
+                  ? `Reading the export and generating this report${elapsedSec > 0 ? ` — ${elapsedSec}s` : ''}…`
+                  : 'Finishing up…'}
               {elapsedSec > 15 ? ' Large exports can take a minute — this is still working.' : ''}
             </p>
           ) : null}

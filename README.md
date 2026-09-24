@@ -87,6 +87,27 @@ video and voice note in the archive is left compressed and untouched. A
 "with media" export is capped at 80MB (25MB for text-only `.txt` uploads),
 and at most 12 files per batch.
 
+### Large uploads go straight to Blob storage
+
+A serverless platform caps the request body of a function well below the size
+of a with-media export — Vercel at a few MB, counted across the whole
+multipart body, which is why a batch of five was rejected where two or three
+got through. No limit in this app could change that; the ceiling is the
+platform's.
+
+So when Blob storage is configured, each export goes **browser → Blob
+directly** ([`lib/client-upload.ts`](lib/client-upload.ts)), authorised by a
+short-lived token from `/api/imports/blob-upload`, and only a small reference
+travels through the function. The server reads that blob, parses it, and
+**deletes it in the same request** — in a `finally`, so a malformed export is
+removed too rather than being exactly the case that leaves someone's
+conversation in storage. Uploads land under a `transient-uploads/` prefix and
+nothing else is readable through that path.
+
+Without Blob storage configured (`npm run dev` with no token) the files are
+posted directly, as before. There is no platform in front of that path, so
+nothing caps it.
+
 From messages inside your chosen range only:
 
 - **Messages this period**, **unique active chatters**, **top voices** (by

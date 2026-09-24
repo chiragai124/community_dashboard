@@ -24,6 +24,7 @@ import { SOURCE_META } from '@/lib/imports';
 import { formatExact } from '@/lib/metrics';
 import { formatDateRange } from '@/lib/period';
 import { groqEnabled } from '@/lib/ai/groq';
+import { blobAccess, vercelBlobEnabled } from '@/lib/vercel-blob';
 import { getCommunitySummaries } from '@/lib/ai/store';
 
 export const dynamic = 'force-dynamic';
@@ -123,6 +124,7 @@ export default async function CommunityPage({
           info={SOURCE_META.whatsapp}
           period={data.activePeriod}
           existing={whatsappImports}
+          blobAccess={vercelBlobEnabled() ? blobAccess() : null}
         />
 
         {fileSources.length > 0 ? (

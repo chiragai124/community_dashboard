@@ -26,6 +26,7 @@ import {
   isGroupSlug,
 } from '@/lib/groups';
 import { isValidISODate } from '@/lib/period';
+import { TRANSIENT_UPLOAD_PREFIX, withTransientBlob } from '@/lib/vercel-blob';
 import { setActivePeriod, type ReportPeriod } from '@/lib/reports';
 import { refreshReport } from '@/lib/dashboard';
 import { generateGroupSummary, groqEnabled } from '@/lib/ai/groq';
@@ -136,18 +137,22 @@ export async function POST(request: Request) {
   if ('error' in period) return NextResponse.json({ error: period.error }, { status: 400 });
 
   const files = form.getAll('file').filter((f): f is File => f instanceof File && f.size > 0);
-  if (files.length === 0) {
+  const { refs: blobs, error: blobError } = blobRefsFrom(form);
+  if (blobError) return NextResponse.json({ error: blobError }, { status: 400 });
+
+  const sources: ChatSource[] = [...files.map(fileSource), ...blobs];
+  if (sources.length === 0) {
     return NextResponse.json({ error: 'No file was attached.' }, { status: 400 });
   }
 
   const meta = SOURCE_META[source];
-  for (const file of files) {
-    const name = file.name.toLowerCase();
+  for (const candidate of sources) {
+    const name = candidate.name.toLowerCase();
     if (!meta.extensions.some((ext) => name.endsWith(ext))) {
       return NextResponse.json(
         {
           error:
-            `${meta.label} expects ${meta.fileDescription}, but “${file.name}” is not ` +
+            `${meta.label} expects ${meta.fileDescription}, but “${candidate.name}” is not ` +
             `${meta.extensions.join(' or ')}. Check you picked the right export.`,
         },
         { status: 400 },
@@ -155,7 +160,13 @@ export async function POST(request: Request) {
     }
   }
 
-  if (source === 'whatsapp') return postWhatsapp(form, files, period);
+  if (source === 'whatsapp') return postWhatsapp(form, sources, period);
+  if (blobs.length > 0) {
+    return NextResponse.json(
+      { error: `${meta.label} files are small enough to upload directly.` },
+      { status: 400 },
+    );
+  }
   if (files.length > 1) {
     return NextResponse.json(
       { error: `${meta.label} takes one file per period, not ${files.length}.` },
@@ -175,6 +186,76 @@ export async function POST(request: Request) {
 
 /* --------------------------------------------------------------- WhatsApp */
 
+/**
+ * One chat export awaiting parsing, however it reached us.
+ *
+ * Small exports still come through the request as ordinary form files. A
+ * with-media export is far too large for a serverless request body, so the
+ * browser puts it in Blob storage and sends only a reference; `read` fetches
+ * it and deletes it in the same breath (see lib/vercel-blob.ts). Everything
+ * downstream — detection, parsing, filing — is identical either way, so the
+ * batch loop never has to know which kind it is holding.
+ */
+interface ChatSource {
+  name: string;
+  /** Bytes as reported by the browser, or null when only the store knows. */
+  size: number | null;
+  /** Reads the bytes. For a blob this also deletes it, success or failure. */
+  read<T>(use: (bytes: Buffer) => Promise<T> | T): Promise<T>;
+}
+
+function fileSource(file: File): ChatSource {
+  return {
+    name: file.name,
+    size: file.size,
+    async read(use) {
+      return use(Buffer.from(await file.arrayBuffer()));
+    },
+  };
+}
+
+function blobSource(ref: { url: string; name: string; size: number | null }): ChatSource {
+  return {
+    name: ref.name,
+    size: ref.size,
+    read: (use) => withTransientBlob(ref.url, use),
+  };
+}
+
+/**
+ * Blob references the client sends in place of the files themselves, as
+ * `blob` form fields holding JSON.
+ *
+ * The url is checked against the transient prefix before anything is fetched:
+ * this endpoint must not be usable to pull an arbitrary object out of the
+ * store — and, since reading one also deletes it, still less to delete one.
+ */
+function blobRefsFrom(form: FormData): { refs: ChatSource[]; error?: string } {
+  const refs: ChatSource[] = [];
+  for (const raw of form.getAll('blob')) {
+    if (typeof raw !== 'string') continue;
+    let parsed: { url?: string; pathname?: string; name?: string; size?: number };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { refs: [], error: 'Malformed upload reference.' };
+    }
+    const url = String(parsed.url ?? '');
+    const pathname = String(parsed.pathname ?? '');
+    if (url === '' || !pathname.startsWith(TRANSIENT_UPLOAD_PREFIX)) {
+      return { refs: [], error: 'That upload reference is not one of ours.' };
+    }
+    refs.push(
+      blobSource({
+        url,
+        name: String(parsed.name ?? pathname.split('/').pop() ?? 'upload'),
+        size: Number.isFinite(Number(parsed.size)) ? Number(parsed.size) : null,
+      }),
+    );
+  }
+  return { refs };
+}
+
 /** What one file in a batch ended up as, for the per-file result list. */
 interface BatchOutcome {
   filename: string;
@@ -191,7 +272,7 @@ interface BatchOutcome {
 
 async function postWhatsapp(
   form: FormData,
-  files: File[],
+  files: ChatSource[],
   period: ReportPeriod,
 ): Promise<NextResponse> {
   const community = form.get('community');
@@ -234,7 +315,7 @@ async function postWhatsapp(
   for (const file of files) {
     const isZip = file.name.toLowerCase().endsWith('.zip');
     const sizeLimit = isZip ? MAX_WHATSAPP_ZIP_BYTES : MAX_WHATSAPP_BYTES;
-    if (file.size > sizeLimit) {
+    if (file.size !== null && file.size > sizeLimit) {
       outcomes.push(
         missOutcome(
           file.name,
@@ -248,13 +329,17 @@ async function postWhatsapp(
     let chatText: string;
     let chatFilename: string;
     try {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      // "Include media" exports are a .zip — the chat .txt is pulled out of
-      // it and everything else (photos, videos, voice notes) is discarded
-      // without ever being decompressed.
-      const extracted = isZip
-        ? extractChatTextFromZip(buffer, file.name)
-        : { text: buffer.toString('utf8'), filename: file.name };
+      // For a client-uploaded export this also deletes it from Blob storage,
+      // whether or not the extraction below succeeds — the raw chat never
+      // outlives the request that reads it.
+      const extracted = await file.read((buffer) =>
+        // "Include media" exports are a .zip — the chat .txt is pulled out of
+        // it and everything else (photos, videos, voice notes) is discarded
+        // without ever being decompressed.
+        isZip
+          ? extractChatTextFromZip(buffer, file.name)
+          : { text: buffer.toString('utf8'), filename: file.name },
+      );
       chatText = extracted.text;
       chatFilename = extracted.filename;
     } catch (err) {
