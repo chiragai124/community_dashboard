@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { DateRangeFields } from '@/components/DateRangeFields';
-import { formatDateRange } from '@/lib/period';
+import { OUT_OF_BOUNDS_MESSAGE, formatDateRange, isSelectableDate } from '@/lib/period';
 
 /**
  * The one date control for the whole report: which period is being looked at,
@@ -20,6 +20,14 @@ import { formatDateRange } from '@/lib/period';
  * Browsing is the dropdown; changing is behind a disclosure, since it is the
  * rarer and more consequential of the two. Uploading a batch of chat exports
  * already sets the period, so most weeks nobody opens it at all.
+ *
+ * The dropdown can only ever list periods that have been filed, which on a
+ * dashboard a few weeks old means a handful of dates in one month. That is
+ * what it is for — it is a list of records — but it must never be the only way
+ * to reach a date, or next week's period could not be set up until next week's
+ * data existed. So "Change dates" is always available, including while
+ * browsing a past report, and its calendar runs to the end of 2030 regardless
+ * of what has been imported.
  */
 
 export interface PeriodOption {
@@ -78,6 +86,10 @@ export function ReportPeriodPicker({
   }
 
   async function saveActivePeriod() {
+    if (!isSelectableDate(start) || !isSelectableDate(end)) {
+      setError(OUT_OF_BOUNDS_MESSAGE);
+      return;
+    }
     if (end < start) {
       setError('The end date is before the start date.');
       return;
@@ -126,16 +138,19 @@ export function ReportPeriodPicker({
           </select>
         </label>
 
-        {isActivePeriod ? (
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={() => setEditing((v) => !v)}
-            disabled={working}
-          >
-            {editing ? 'Cancel' : 'Change dates'}
-          </button>
-        ) : (
+        {/* Always offered, whichever report is on screen: the dropdown lists
+            only filed periods, so this is the only route to a date nothing has
+            been filed against yet. */}
+        <button
+          type="button"
+          className="btn btn--sm"
+          onClick={() => setEditing((v) => !v)}
+          disabled={working}
+        >
+          {editing ? 'Cancel' : 'Change dates'}
+        </button>
+
+        {isActivePeriod ? null : (
           <button
             type="button"
             className="btn btn--sm btn--primary"
@@ -167,6 +182,7 @@ export function ReportPeriodPicker({
             disabled={working}
           />
           <p className="chartNote" style={{ marginTop: 0 }}>
+            Any range up to the end of 2030 — it does not have to be a period that already has data.
             Everything filed from now on — uploads, member counts, leads, Instagram — goes to this
             range, until it changes again.
           </p>

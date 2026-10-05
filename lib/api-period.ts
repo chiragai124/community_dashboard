@@ -1,4 +1,4 @@
-import { isValidISODate } from './period';
+import { OUT_OF_BOUNDS_MESSAGE, isSelectableDate, isValidISODate } from './period';
 import { getActivePeriod, type ReportPeriod } from './reports';
 
 /**
@@ -23,6 +23,7 @@ export async function periodFromBody(body: {
   if (!isValidISODate(start) || !isValidISODate(end)) {
     return { error: 'Enter a valid report period (periodStart and periodEnd, YYYY-MM-DD).' };
   }
+  if (!isSelectableDate(start) || !isSelectableDate(end)) return { error: OUT_OF_BOUNDS_MESSAGE };
   if (end < start) return { error: 'The end date is before the start date.' };
   return { start, end };
 }
