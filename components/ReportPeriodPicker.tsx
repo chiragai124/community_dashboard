@@ -3,7 +3,13 @@
 import { useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { DateRangeFields } from '@/components/DateRangeFields';
-import { OUT_OF_BOUNDS_MESSAGE, formatDateRange, isSelectableDate } from '@/lib/period';
+import {
+  OUT_OF_BOUNDS_MESSAGE,
+  PERIOD_MAX_DATE,
+  PERIOD_MIN_DATE,
+  formatDateRange,
+  isSelectableDate,
+} from '@/lib/period';
 
 /**
  * The one date control for the whole report: which period is being looked at,
@@ -122,7 +128,13 @@ export function ReportPeriodPicker({
     <section className={`periodBar${isActivePeriod ? '' : ' periodBar--past'}`}>
       <div className="periodBar__row">
         <label className="field field--inline">
-          <span className="field__label">Report period</span>
+          <span className="field__label">
+            Report period{' '}
+            {/* Said out loud, because a list of filed reports looks like a list
+                of permitted dates: with two months imported it offers two
+                months, and nothing on screen says the other ten are reachable. */}
+            <span className="field__hint">filed reports — use Change dates for any other week</span>
+          </span>
           <select
             value={currentId}
             onChange={(e) => show(e.target.value)}
@@ -182,7 +194,8 @@ export function ReportPeriodPicker({
             disabled={working}
           />
           <p className="chartNote" style={{ marginTop: 0 }}>
-            Any range up to the end of 2030 — it does not have to be a period that already has data.
+            Any range from {PERIOD_MIN_DATE} to {PERIOD_MAX_DATE} — it does not have to be a period
+            that already has data.
             Everything filed from now on — uploads, member counts, leads, Instagram — goes to this
             range, until it changes again.
           </p>
