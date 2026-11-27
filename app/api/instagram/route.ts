@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { saveInstagramChannel, saveInstagramMemberEntry } from '@/lib/instagram';
-import { isValidISODate } from '@/lib/period';
+import { OUT_OF_BOUNDS_MESSAGE, isSelectableDate } from '@/lib/period';
 import { refreshReportsFor } from '@/lib/dashboard';
 import { periodFromBody } from '@/lib/api-period';
 
@@ -34,9 +34,9 @@ export async function POST(request: Request) {
 
   let createdOn: string | null = null;
   if (wantsCreated) {
-    if (!isValidISODate(String(body.createdOn))) {
+    if (!isSelectableDate(String(body.createdOn))) {
       return NextResponse.json(
-        { error: 'Enter a valid creation date (YYYY-MM-DD).' },
+        { error: `Enter a valid creation date (YYYY-MM-DD). ${OUT_OF_BOUNDS_MESSAGE}` },
         { status: 400 },
       );
     }

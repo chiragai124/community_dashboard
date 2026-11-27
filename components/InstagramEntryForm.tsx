@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { formatDateRange } from '@/lib/period';
+import { PERIOD_MAX_DATE, PERIOD_MIN_DATE, formatDateRange } from '@/lib/period';
 
 /**
  * The Instagram broadcast channel's two manual inputs.
@@ -117,6 +117,8 @@ export function InstagramEntryForm({
             <input
               type="date"
               value={created}
+              min={PERIOD_MIN_DATE}
+              max={PERIOD_MAX_DATE}
               onChange={(e) => setCreated(e.target.value)}
               disabled={working}
             />

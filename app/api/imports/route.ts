@@ -25,7 +25,7 @@ import {
   isCommunitySlug,
   isGroupSlug,
 } from '@/lib/groups';
-import { isValidISODate } from '@/lib/period';
+import { OUT_OF_BOUNDS_MESSAGE, isSelectableDate, isValidISODate } from '@/lib/period';
 import { TRANSIENT_UPLOAD_PREFIX, withTransientBlob } from '@/lib/vercel-blob';
 import { setActivePeriod, type ReportPeriod } from '@/lib/reports';
 import { refreshReport } from '@/lib/dashboard';
@@ -92,6 +92,7 @@ function periodFromForm(form: FormData): ReportPeriod | { error: string } {
   if (!isValidISODate(start) || !isValidISODate(end)) {
     return { error: 'Enter a valid start and end date (YYYY-MM-DD) for this report.' };
   }
+  if (!isSelectableDate(start) || !isSelectableDate(end)) return { error: OUT_OF_BOUNDS_MESSAGE };
   if (end < start) return { error: 'The end date is before the start date.' };
   return { start, end };
 }

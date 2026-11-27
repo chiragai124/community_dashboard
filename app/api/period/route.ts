@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isValidISODate } from '@/lib/period';
+import { OUT_OF_BOUNDS_MESSAGE, isSelectableDate, isValidISODate } from '@/lib/period';
 import { setActivePeriod } from '@/lib/reports';
 import { refreshReport } from '@/lib/dashboard';
 
@@ -26,6 +26,12 @@ export async function POST(request: Request) {
       { error: 'Enter a valid start and end date (YYYY-MM-DD).' },
       { status: 400 },
     );
+  }
+  // The pickers already bound this; the check is here for anything that does
+  // not go through them, so a typo'd year cannot become a period nothing can
+  // find again.
+  if (!isSelectableDate(start) || !isSelectableDate(end)) {
+    return NextResponse.json({ error: OUT_OF_BOUNDS_MESSAGE }, { status: 400 });
   }
   if (end < start) {
     return NextResponse.json({ error: 'The end date is before the start date.' }, { status: 400 });
